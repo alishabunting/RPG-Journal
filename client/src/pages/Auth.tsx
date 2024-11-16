@@ -15,16 +15,10 @@ import {
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { useToast } from "../hooks/use-toast";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import useSWR from "swr";
 
 const authSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(20, "Username must be less than 20 characters"),
-  password: z.string()
-    .min(6, "Password must be at least 6 characters")
-    .max(50, "Password must be less than 50 characters")
-    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-    .regex(/[0-9]/, "Password must contain at least one number"),
 });
 
 export default function Auth() {
@@ -44,7 +38,6 @@ export default function Auth() {
     resolver: zodResolver(authSchema),
     defaultValues: {
       username: "",
-      password: "",
     },
   });
 
@@ -52,15 +45,12 @@ export default function Auth() {
     let title = "Authentication Error";
     let description = "An unexpected error occurred. Please try again.";
 
-    if (error.message === "Username already exists") {
-      title = "Registration Failed";
+    if (error.message === "Username already taken") {
+      title = "Username Unavailable";
       description = "This username is already taken. Please choose another one.";
     } else if (error.message.includes("Network")) {
       title = "Connection Error";
       description = "Please check your internet connection and try again.";
-    } else if (error.message.includes("Username") || error.message.includes("Password")) {
-      title = "Invalid Credentials";
-      description = error.message;
     }
 
     toast({
@@ -70,35 +60,19 @@ export default function Auth() {
     });
   };
 
-  async function onSubmit(values: z.infer<typeof authSchema>, isLogin: boolean) {
+  async function onSubmit(values: z.infer<typeof authSchema>) {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/auth/${isLogin ? 'login' : 'register'}`, {
+      const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify({ ...values, none: "none" }), // Add dummy password field
       });
 
-      const data = await res.json();
-
       if (res.ok) {
-        if (isLogin) {
-          setLocation("/");
-        } else {
-          // After registration, automatically log in
-          const loginRes = await fetch("/api/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(values),
-          });
-          
-          if (loginRes.ok) {
-            setLocation("/");
-          } else {
-            throw new Error("Failed to log in after registration");
-          }
-        }
+        setLocation("/");
       } else {
+        const data = await res.json();
         throw new Error(data.message || "Authentication failed");
       }
     } catch (error) {
@@ -121,105 +95,30 @@ export default function Auth() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <Tabs 
-            defaultValue="login" 
-            className="w-full"
-            onValueChange={() => {
-              form.reset();
-              setIsLoading(false);
-            }}
-          >
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="login">Login</TabsTrigger>
-              <TabsTrigger value="register">Register</TabsTrigger>
-            </TabsList>
-            <TabsContent value="login">
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit((values) => onSubmit(values, true))} className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="username"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white">Username</FormLabel>
-                        <FormControl>
-                          <Input {...field} className="border-purple-500" />
-                        </FormControl>
-                        <FormMessage className="text-red-400" />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="password"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white">Password</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="password"
-                            {...field}
-                            className="border-purple-500"
-                          />
-                        </FormControl>
-                        <FormMessage className="text-red-400" />
-                      </FormItem>
-                    )}
-                  />
-                  <Button
-                    type="submit"
-                    className="w-full bg-purple-600 hover:bg-purple-700"
-                    disabled={isLoading}
-                  >
-                    {isLoading ? "Loading..." : "Enter"}
-                  </Button>
-                </form>
-              </Form>
-            </TabsContent>
-            <TabsContent value="register">
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit((values) => onSubmit(values, false))} className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="username"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white">Choose Username</FormLabel>
-                        <FormControl>
-                          <Input {...field} className="border-purple-500" />
-                        </FormControl>
-                        <FormMessage className="text-red-400" />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="password"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white">Create Password</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="password"
-                            {...field}
-                            className="border-purple-500"
-                          />
-                        </FormControl>
-                        <FormMessage className="text-red-400" />
-                      </FormItem>
-                    )}
-                  />
-                  <Button
-                    type="submit"
-                    className="w-full bg-purple-600 hover:bg-purple-700"
-                    disabled={isLoading}
-                  >
-                    {isLoading ? "Creating..." : "Begin Journey"}
-                  </Button>
-                </form>
-              </Form>
-            </TabsContent>
-          </Tabs>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="username"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-white">Choose Your Username</FormLabel>
+                    <FormControl>
+                      <Input {...field} className="border-purple-500" placeholder="Enter username to start" />
+                    </FormControl>
+                    <FormMessage className="text-red-400" />
+                  </FormItem>
+                )}
+              />
+              <Button
+                type="submit"
+                className="w-full bg-purple-600 hover:bg-purple-700"
+                disabled={isLoading}
+              >
+                {isLoading ? "Entering the Realm..." : "Begin Journey"}
+              </Button>
+            </form>
+          </Form>
         </CardContent>
       </Card>
     </div>

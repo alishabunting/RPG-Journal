@@ -30,62 +30,9 @@ export function registerRoutes(app: Express) {
     });
   });
 
-  // Registration route with enhanced error handling
-  app.post("/api/auth/register", async (req, res) => {
-    const { username, password } = req.body;
-    
-    try {
-      const existingUser = await db.query.users.findFirst({
-        where: eq(users.username, username),
-      });
-
-      if (existingUser) {
-        console.warn(`Registration failed: Username already exists - ${username}`);
-        return res.status(400).json({ message: "Username already exists" });
-      }
-
-      const hashedPassword = await hash(password, 10);
-      const [newUser] = await db.insert(users)
-        .values({
-          username,
-          password: hashedPassword,
-          character: {
-            name: "",
-            avatar: "",
-            class: "",
-            stats: {
-              wellness: 1,
-              social: 1,
-              growth: 1,
-              achievement: 1
-            }
-          }
-        })
-        .returning();
-
-      console.log(`User registered successfully: ${username}`);
-
-      // Manually create session
-      req.session.regenerate((err) => {
-        if (err) {
-          console.error('Session regeneration error:', err);
-          return res.status(500).json({ message: "Error creating session" });
-        }
-
-        req.session.passport = { user: newUser.id };
-        req.session.save((err) => {
-          if (err) {
-            console.error('Session save error:', err);
-            return res.status(500).json({ message: "Error saving session" });
-          }
-          console.log(`Session created successfully for user: ${username}`);
-          res.status(201).json(newUser);
-        });
-      });
-    } catch (error) {
-      console.error('Registration error:', error);
-      res.status(500).json({ message: "Error creating user" });
-    }
+  // Registration is now handled by the LocalStrategy
+  app.post("/api/auth/register", passport.authenticate("local"), (req, res) => {
+    res.json(req.user);
   });
 
   // Character routes
@@ -124,10 +71,8 @@ export function registerRoutes(app: Express) {
     const { content } = req.body;
 
     try {
-      // Analyze entry with OpenAI
       const analysis = await analyzeEntry(content);
       
-      // Create journal entry
       await db.insert(journals).values({
         userId,
         content,
@@ -135,7 +80,6 @@ export function registerRoutes(app: Express) {
         tags: analysis.tags,
       });
 
-      // Generate and save quests
       const newQuests = await generateQuests(analysis);
       await db.insert(quests).values(
         newQuests.map(quest => ({

@@ -3,26 +3,34 @@ import { Strategy as LocalStrategy } from "passport-local";
 import { db } from "../db";
 import { users } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { compare, hash } from "bcrypt";
 
 passport.use(
-  new LocalStrategy(async (username, password, done) => {
+  new LocalStrategy({ passwordField: 'none' }, async (username, _password, done) => {
     try {
-      const user = await db.query.users.findFirst({
+      let user = await db.query.users.findFirst({
         where: eq(users.username, username),
       });
       
       if (!user) {
-        console.error(`Authentication failed: User not found - ${username}`);
-        return done(null, false, { message: "Invalid username or password" });
-      }
-
-      const isValid = await compare(password, user.password);
-      console.log(`Password validation for ${username}: ${isValid}`);
-      
-      if (!isValid) {
-        console.error(`Authentication failed: Invalid password for user - ${username}`);
-        return done(null, false, { message: "Invalid username or password" });
+        // If user doesn't exist, create a new one
+        const [newUser] = await db.insert(users)
+          .values({
+            username,
+            character: {
+              name: "",
+              avatar: "",
+              class: "",
+              stats: {
+                wellness: 1,
+                social: 1,
+                growth: 1,
+                achievement: 1
+              }
+            }
+          })
+          .returning();
+        user = newUser;
+        console.log(`New user created: ${username}`);
       }
 
       console.log(`Authentication successful for user: ${username}`);
