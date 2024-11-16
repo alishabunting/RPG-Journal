@@ -1,0 +1,21 @@
+Warning: A component is changing an uncontrolled input to be controlled. This is likely caused by the value changing from undefined to a defined value, which should not happen. Decide between using a controlled or uncontrolled input element for the lifetime of the component. More info: https://reactjs.org/link/controlled-components%s 
+    at input
+    at _c (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/src/components/ui/input.tsx:20:11)
+    at https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/@fs/home/runner/RPG-Journal-Gamer/node_modules/.vite/deps/chunk-OR7UTWKI.js?v=141bf1a0:52:11
+    at https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/@fs/home/runner/RPG-Journal-Gamer/node_modules/.vite/deps/chunk-OR7UTWKI.js?v=141bf1a0:33:11
+    at https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/src/components/ui/form.tsx:127:9
+    at div
+    at https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/src/components/ui/form.tsx:71:6
+    at Controller (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/@fs/home/runner/RPG-Journal-Gamer/node_modules/.vite/deps/chunk-O2UWLFZ4.js?v=141bf1a0:313:35)
+    at FormField (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/src/components/ui/form.tsx:32:6)
+    at form
+    at FormProvider (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/@fs/home/runner/RPG-Journal-Gamer/node_modules/.vite/deps/chunk-O2UWLFZ4.js?v=141bf1a0:102:11)
+    at div
+    at _c9 (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/src/components/ui/card.tsx:106:12)
+    at div
+    at _c (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/src/components/ui/card.tsx:20:11)
+    at div
+    at Auth (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/src/pages/Auth.tsx:40:27)
+    at Route (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/@fs/home/runner/RPG-Journal-Gamer/node_modules/.vite/deps/wouter.js?v=141bf1a0:191:16)
+    at Switch (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/@fs/home/runner/RPG-Journal-Gamer/node_modules/.vite/deps/wouter.js?v=141bf1a0:247:17)
+    at SWRConfig (https://b5fcc213-4859-441e-a243-fe735094aee8-00-c9gnnp2lnl06.picard.replit.dev/@fs/home/runner/RPG-Journal-Gamer/node_modules/.vite/deps/swr.js?v=141bf1a0:423:11)
