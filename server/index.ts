@@ -27,10 +27,14 @@ console.log("Initializing session store...");
 const sessionStore = new PgSession({
   pool,
   createTableIfMissing: true,
-  pruneSessionInterval: 60,
-  disableTouch: true, // Optimize session store queries
+  tableName: 'session',
   schemaName: 'public',
-  tableName: 'session'
+  pruneSessionInterval: 60, // Prune expired sessions every 60 seconds
+  disableTouch: false, // Enable session touches to prevent premature expiration
+  // Enhanced error handling for session store
+  errorLog: (error) => {
+    console.error('Session store error:', error);
+  }
 });
 
 // Session store error handling
@@ -40,17 +44,24 @@ sessionStore.on('error', (error) => {
 
 const sessionSecret = process.env.SESSION_SECRET || process.env.REPLIT_ID || "rpg-journal-secret";
 
+// Enhanced session configuration
 app.use(
   session({
     store: sessionStore,
     secret: sessionSecret,
+    name: 'rpg.sid', // Custom cookie name
     resave: false,
+    rolling: true, // Reset maxAge on every response
     saveUninitialized: false,
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       secure: process.env.NODE_ENV === "production",
-      sameSite: 'lax'
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/'
     },
+    // Enable session store keep-alive
+    unset: 'keep'
   })
 );
 
@@ -74,11 +85,15 @@ app.get('/api/health/pool', async (_req: Request, res: Response) => {
 app.get('/api/health', async (_req: Request, res: Response) => {
   try {
     const poolStatus = await getPoolStatus();
+    const sessionCount = await getSessionCount();
     res.json({ 
       status: 'ok', 
       timestamp: new Date().toISOString(),
       env: process.env.NODE_ENV || 'development',
-      pool: poolStatus
+      pool: poolStatus,
+      sessions: {
+        count: sessionCount
+      }
     });
   } catch (error) {
     res.status(500).json({ 
@@ -88,6 +103,17 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     });
   }
 });
+
+// Session count helper function
+async function getSessionCount() {
+  try {
+    const result = await pool.query('SELECT COUNT(*) FROM session');
+    return parseInt(result.rows[0].count);
+  } catch (error) {
+    console.error('Failed to get session count:', error);
+    return -1;
+  }
+}
 
 // Enhanced error handling middleware
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
@@ -99,10 +125,23 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
+// Session cleanup on shutdown
+async function cleanupSessions() {
+  try {
+    await pool.query('DELETE FROM session WHERE expire < NOW()');
+    console.log('Expired sessions cleaned up');
+  } catch (error) {
+    console.error('Failed to cleanup sessions:', error);
+  }
+}
+
 (async () => {
   try {
     console.log("Checking database connection...");
     await checkConnection();
+
+    // Clean up expired sessions on startup
+    await cleanupSessions();
 
     console.log("Registering routes...");
     registerRoutes(app);
@@ -141,3 +180,16 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     process.exit(1);
   }
 })();
+
+// Cleanup on shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received. Cleaning up...');
+  await cleanupSessions();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received. Cleaning up...');
+  await cleanupSessions();
+  process.exit(0);
+});
