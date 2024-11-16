@@ -6,25 +6,43 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic } from "./vite";
 import { createServer } from "http";
 import "./auth";
+import { db } from "../db";
+import { users } from "../db/schema";
 
 const app = express();
+
+// Logging middleware
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  console.log(`${new Date().toISOString()} [${req.method}] ${req.url}`);
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 // Session configuration
 const PgSession = pgSimple(session);
+
+console.log("Initializing session store...");
+const sessionStore = new PgSession({
+  conObject: {
+    user: process.env.PGUSER,
+    password: process.env.PGPASSWORD,
+    host: process.env.PGHOST,
+    port: Number(process.env.PGPORT),
+    database: process.env.PGDATABASE,
+  },
+  createTableIfMissing: true,
+});
+
+// Add error handler for session store
+sessionStore.on('error', (error) => {
+  console.error('Session store error:', error);
+});
+
 app.use(
   session({
-    store: new PgSession({
-      conObject: {
-        user: process.env.PGUSER,
-        password: process.env.PGPASSWORD,
-        host: process.env.PGHOST,
-        port: Number(process.env.PGPORT),
-        database: process.env.PGDATABASE,
-      },
-      createTableIfMissing: true,
-    }),
+    store: sessionStore,
     secret: "rpg-journal-secret",
     resave: false,
     saveUninitialized: false,
@@ -36,41 +54,61 @@ app.use(
 );
 
 // Initialize passport
+console.log("Initializing passport...");
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Error handling middleware
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("Server error:", err);
+  res.status(500).json({ message: "Internal server error" });
+});
+
 (async () => {
-  registerRoutes(app);
-  const server = createServer(app);
+  try {
+    // Add database connection check
+    try {
+      await db.query.users.findFirst();
+      console.log("Database connection successful");
+    } catch (error) {
+      console.error("Database connection failed:", error);
+      process.exit(1);
+    }
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    console.log("Registering routes...");
+    registerRoutes(app);
+    const server = createServer(app);
 
-    res.status(status).json({ message });
-    throw err;
-  });
-
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
-  }
-
-  // ALWAYS serve the app on port 5000
-  // this serves both the API and the client
-  const PORT = 5000;
-  server.listen(PORT, "0.0.0.0", () => {
-    const formattedTime = new Date().toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: true,
+    // Error handling for uncaught exceptions
+    process.on("uncaughtException", (err) => {
+      console.error("Uncaught Exception:", err);
     });
 
-    console.log(`${formattedTime} [express] serving on port ${PORT}`);
-  });
+    process.on("unhandledRejection", (reason, promise) => {
+      console.error("Unhandled Rejection at:", promise, "reason:", reason);
+    });
+
+    if (app.get("env") === "development") {
+      console.log("Setting up Vite in development mode...");
+      await setupVite(app, server);
+    } else {
+      console.log("Setting up static file serving...");
+      serveStatic(app);
+    }
+
+    const PORT = 5000;
+    server.listen(PORT, "0.0.0.0", () => {
+      const formattedTime = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      });
+
+      console.log(`${formattedTime} [express] Server started successfully on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
 })();
