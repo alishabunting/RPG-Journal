@@ -6,7 +6,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic } from "./vite";
 import { createServer } from "http";
 import "./auth";
-import { db, checkConnection, getPoolStatus, pool } from "../db";
+import { db, checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db";
 
 const app = express();
 
@@ -104,15 +104,23 @@ app.get('/api/health', async (_req: Request, res: Response) => {
   }
 });
 
-// Session count helper function
+// Session count helper function with retry logic
 async function getSessionCount() {
-  try {
-    const result = await pool.query('SELECT COUNT(*) FROM session');
-    return parseInt(result.rows[0].count);
-  } catch (error) {
-    console.error('Failed to get session count:', error);
-    return -1;
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      const result = await pool.query('SELECT COUNT(*) FROM session');
+      return parseInt(result.rows[0].count);
+    } catch (error) {
+      retries--;
+      if (retries === 0) {
+        console.error('Failed to get session count after all retries:', error);
+        return -1;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
+  return -1;
 }
 
 // Enhanced error handling middleware
@@ -125,13 +133,22 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-// Session cleanup on shutdown
+// Session cleanup on shutdown with retry logic
 async function cleanupSessions() {
-  try {
-    await pool.query('DELETE FROM session WHERE expire < NOW()');
-    console.log('Expired sessions cleaned up');
-  } catch (error) {
-    console.error('Failed to cleanup sessions:', error);
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      await pool.query('DELETE FROM session WHERE expire < NOW()');
+      console.log('Expired sessions cleaned up');
+      break;
+    } catch (error) {
+      retries--;
+      if (retries === 0) {
+        console.error('Failed to cleanup sessions after all retries:', error);
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
 }
 
@@ -150,6 +167,7 @@ async function cleanupSessions() {
     // Error handling for uncaught exceptions
     process.on("uncaughtException", (err) => {
       console.error("Uncaught Exception:", err);
+      stopHealthCheck(); // Stop health check on uncaught exception
     });
 
     process.on("unhandledRejection", (reason, promise) => {
@@ -174,6 +192,7 @@ async function cleanupSessions() {
       });
 
       console.log(`${formattedTime} [express] Server started successfully on port ${PORT}`);
+      startHealthCheck(); // Start health check after server starts
     });
   } catch (error) {
     console.error("Failed to start server:", error);
@@ -184,12 +203,14 @@ async function cleanupSessions() {
 // Cleanup on shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Cleaning up...');
+  stopHealthCheck();
   await cleanupSessions();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received. Cleaning up...');
+  stopHealthCheck();
   await cleanupSessions();
   process.exit(0);
 });

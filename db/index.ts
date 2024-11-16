@@ -14,25 +14,39 @@ if (!process.env.DATABASE_URL) {
 neonConfig.webSocketConstructor = WebSocket;
 neonConfig.poolQueryViaFetch = true; // Enable fetch-based querying for better performance
 
+// Retry configuration
+const RETRY_CONFIG = {
+  maxRetries: 5,
+  initialDelayMs: 1000,
+  maxDelayMs: 30000,
+  connectionTimeoutMs: 30000,
+  healthCheckIntervalMs: 30000,
+};
+
 // Configure connection pool optimized for serverless environment
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20, // Increased for better concurrent performance
   idleTimeoutMillis: 60000, // 60 seconds idle timeout for better connection reuse
-  connectionTimeoutMillis: 30000, // 30 seconds connection timeout for stability
+  connectionTimeoutMillis: RETRY_CONFIG.connectionTimeoutMs,
   maxUses: 15000, // Increased max uses per connection for better efficiency
   ssl: {
     rejectUnauthorized: false
   }
 });
 
-// Enhanced pool event listeners with detailed logging
-pool.on('error', (err) => {
+// Enhanced pool event listeners with detailed logging and retry logic
+pool.on('error', async (err) => {
   console.error('Connection pool error:', err.message, '\nStack:', err.stack);
+  await handlePoolError(err);
 });
 
 pool.on('connect', (client) => {
   console.log(`New client connected to pool (${pool.totalCount} total connections)`);
+  client.on('error', async (err) => {
+    console.error('Client connection error:', err.message);
+    await handleClientError(client, err);
+  });
 });
 
 pool.on('acquire', () => {
@@ -47,40 +61,102 @@ pool.on('remove', () => {
 // Create database client with connection pooling
 export const db = drizzle(pool, { schema });
 
+// Enhanced connection retry logic with exponential backoff
+async function retryWithBackoff(operation: () => Promise<any>, retryCount = 0): Promise<any> {
+  try {
+    return await operation();
+  } catch (error: any) {
+    if (retryCount >= RETRY_CONFIG.maxRetries) {
+      console.error(`Maximum retry attempts (${RETRY_CONFIG.maxRetries}) reached:`, error);
+      throw error;
+    }
+
+    // Calculate delay with exponential backoff and jitter
+    const baseDelay = Math.min(
+      RETRY_CONFIG.initialDelayMs * Math.pow(2, retryCount),
+      RETRY_CONFIG.maxDelayMs
+    );
+    const jitter = Math.random() * 1000;
+    const delay = baseDelay + jitter;
+
+    console.log(`Retry attempt ${retryCount + 1}/${RETRY_CONFIG.maxRetries} after ${delay}ms`);
+    await new Promise(resolve => setTimeout(resolve, delay));
+    return retryWithBackoff(operation, retryCount + 1);
+  }
+}
+
+// Enhanced pool error handler
+async function handlePoolError(error: Error) {
+  console.error('Pool error detected, attempting recovery...', error);
+  try {
+    await retryWithBackoff(async () => {
+      const client = await pool.connect();
+      await client.query('SELECT 1');
+      client.release();
+      console.log('Pool recovery successful');
+    });
+  } catch (err) {
+    console.error('Pool recovery failed:', err);
+    // Implement circuit breaker pattern
+    await terminatePool();
+  }
+}
+
+// Enhanced client error handler
+async function handleClientError(client: any, error: Error) {
+  console.error('Client error detected, attempting recovery...', error);
+  try {
+    client.release(error);
+    await retryWithBackoff(async () => {
+      const newClient = await pool.connect();
+      await newClient.query('SELECT 1');
+      newClient.release();
+      console.log('Client recovery successful');
+    });
+  } catch (err) {
+    console.error('Client recovery failed:', err);
+  }
+}
+
 // Enhanced connection health check with improved error handling and retry logic
 export const checkConnection = async () => {
-  let retries = 5;
-  let delay = 1000; // Start with 1 second delay
-
-  while (retries > 0) {
+  return retryWithBackoff(async () => {
+    const client = await pool.connect();
     try {
-      const client = await pool.connect();
-      try {
-        const startTime = Date.now();
-        await client.query('SELECT 1'); // Simple health check query
-        const duration = Date.now() - startTime;
-        console.log(`Database connection successful (query time: ${duration}ms)`);
-        return true;
-      } finally {
-        client.release();
-      }
-    } catch (error: any) {
-      retries--;
-      console.error(`Database connection attempt failed (${error.code}). Retries left: ${retries}`);
-      console.error('Connection error details:', error.message);
-      
-      if (retries === 0) {
-        console.error('All connection attempts failed:', error);
-        throw new Error(`Database connection failed after 5 attempts: ${error.message}`);
-      }
-      
-      // Exponential backoff with jitter
-      const jitter = Math.random() * 1000;
-      await new Promise(resolve => setTimeout(resolve, delay + jitter));
-      delay *= 2; // Double the delay for next retry
+      const startTime = Date.now();
+      await client.query('SELECT 1'); // Simple health check query
+      const duration = Date.now() - startTime;
+      console.log(`Database connection successful (query time: ${duration}ms)`);
+      return true;
+    } finally {
+      client.release();
     }
+  });
+};
+
+// Periodic health check monitor
+let healthCheckInterval: NodeJS.Timeout | null = null;
+
+export const startHealthCheck = () => {
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
   }
-  return false;
+
+  healthCheckInterval = setInterval(async () => {
+    try {
+      await checkConnection();
+    } catch (error) {
+      console.error('Health check failed:', error);
+    }
+  }, RETRY_CONFIG.healthCheckIntervalMs);
+};
+
+// Stop health check monitor
+export const stopHealthCheck = () => {
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
+    healthCheckInterval = null;
+  }
 };
 
 // Enhanced pool monitoring with detailed metrics
@@ -124,9 +200,21 @@ export const getPoolStatus = async () => {
   }
 };
 
+// Graceful pool termination
+async function terminatePool() {
+  console.error('Terminating connection pool due to unrecoverable error');
+  stopHealthCheck();
+  try {
+    await pool.end();
+  } catch (error) {
+    console.error('Error while terminating pool:', error);
+  }
+}
+
 // Enhanced graceful shutdown handler with timeout and connection draining
 const cleanup = async () => {
   console.log('Starting graceful shutdown...');
+  stopHealthCheck();
   let shuttingDown = false;
 
   try {
@@ -168,5 +256,8 @@ const cleanup = async () => {
 // Register cleanup handlers
 process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
+
+// Start health check monitor
+startHealthCheck();
 
 export { pool };
