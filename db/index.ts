@@ -1,4 +1,5 @@
 import { drizzle } from "drizzle-orm/neon-http";
+import { neon, neonConfig } from '@neondatabase/serverless';
 import * as schema from "./schema";
 
 if (!process.env.DATABASE_URL) {
@@ -7,4 +8,8 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const db = drizzle({ connection: process.env.DATABASE_URL, schema });
+// Configure neon to use SSL
+neonConfig.fetchConnectionCache = true;
+const sql = neon(process.env.DATABASE_URL);
+
+export const db = drizzle(sql, { schema });

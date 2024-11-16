@@ -26,13 +26,13 @@ const PgSession = pgSimple(session);
 console.log("Initializing session store...");
 const sessionStore = new PgSession({
   conObject: {
-    user: process.env.PGUSER,
-    password: process.env.PGPASSWORD,
-    host: process.env.PGHOST,
-    port: Number(process.env.PGPORT),
-    database: process.env.PGDATABASE,
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+      rejectUnauthorized: false
+    }
   },
   createTableIfMissing: true,
+  pruneSessionInterval: 60
 });
 
 // Add error handler for session store
@@ -40,15 +40,18 @@ sessionStore.on('error', (error) => {
   console.error('Session store error:', error);
 });
 
+const sessionSecret = process.env.SESSION_SECRET || process.env.REPLIT_ID || "rpg-journal-secret";
+
 app.use(
   session({
     store: sessionStore,
-    secret: "rpg-journal-secret",
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       secure: process.env.NODE_ENV === "production",
+      sameSite: 'lax'
     },
   })
 );
