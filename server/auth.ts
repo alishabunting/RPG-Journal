@@ -7,36 +7,34 @@ import { eq } from "drizzle-orm";
 passport.use(
   new LocalStrategy({ passwordField: 'none' }, async (username, _password, done) => {
     try {
-      let user = await db.query.users.findFirst({
-        where: eq(users.username, username),
-      });
+      console.log(`Authentication attempt for username: ${username}`);
       
-      if (!user) {
-        // If user doesn't exist, create a new one
-        const [newUser] = await db.insert(users)
-          .values({
-            username,
-            character: {
-              name: "",
-              avatar: "",
-              class: "",
-              stats: {
-                wellness: 1,
-                social: 1,
-                growth: 1,
-                achievement: 1
-              }
+      // Always create a new user on login attempt (as per manager's request)
+      const [newUser] = await db.insert(users)
+        .values({
+          username,
+          character: {
+            name: "",
+            avatar: "",
+            class: "",
+            stats: {
+              wellness: 1,
+              social: 1,
+              growth: 1,
+              achievement: 1
             }
-          })
-          .returning();
-        user = newUser;
-        console.log(`New user created: ${username}`);
-      }
+          }
+        })
+        .returning();
 
-      console.log(`Authentication successful for user: ${username}`);
-      return done(null, user);
+      console.log(`New user created with ID: ${newUser.id}`);
+      return done(null, newUser);
     } catch (err) {
-      console.error('Authentication error:', err);
+      console.error('Authentication error:', {
+        error: err,
+        username: username,
+        timestamp: new Date().toISOString()
+      });
       return done(err);
     }
   })
@@ -44,10 +42,14 @@ passport.use(
 
 passport.serializeUser((user: any, done) => {
   try {
-    console.log(`Serializing user: ${user.id}`);
+    console.log(`Serializing user with ID: ${user.id}`);
     done(null, user.id);
   } catch (err) {
-    console.error('Error during user serialization:', err);
+    console.error('Error during user serialization:', {
+      error: err,
+      userId: user?.id,
+      timestamp: new Date().toISOString()
+    });
     done(err);
   }
 });
@@ -61,10 +63,14 @@ passport.deserializeUser(async (id: number, done) => {
       console.warn(`Session invalid: User ${id} not found during deserialization`);
       return done(null, false);
     }
-    console.log(`Deserialized user: ${id}`);
+    console.log(`Successfully deserialized user: ${id}`);
     done(null, user);
   } catch (err) {
-    console.error('Error during user deserialization:', err);
+    console.error('Error during user deserialization:', {
+      error: err,
+      userId: id,
+      timestamp: new Date().toISOString()
+    });
     done(err);
   }
 });

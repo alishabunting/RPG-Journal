@@ -4,7 +4,7 @@ import { z } from "zod";
 
 export const users = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  username: text("username").unique().notNull(),
+  username: text("username").notNull(), // Removed .unique() constraint
   character: jsonb("character").default({
     name: "",
     avatar: "",
