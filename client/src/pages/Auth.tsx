@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,16 +16,29 @@ import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { useToast } from "../hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import useSWR from "swr";
 
 const authSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  username: z.string().min(3, "Username must be at least 3 characters").max(20, "Username must be less than 20 characters"),
+  password: z.string()
+    .min(6, "Password must be at least 6 characters")
+    .max(50, "Password must be less than 50 characters")
+    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+    .regex(/[0-9]/, "Password must contain at least one number"),
 });
 
 export default function Auth() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const { data: user, error } = useSWR('/api/auth/me');
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (user && !error) {
+      setLocation("/");
+    }
+  }, [user, error, setLocation]);
 
   const form = useForm<z.infer<typeof authSchema>>({
     resolver: zodResolver(authSchema),
@@ -35,6 +48,28 @@ export default function Auth() {
     },
   });
 
+  const handleAuthError = (error: any) => {
+    let title = "Authentication Error";
+    let description = "An unexpected error occurred. Please try again.";
+
+    if (error.message === "Username already exists") {
+      title = "Registration Failed";
+      description = "This username is already taken. Please choose another one.";
+    } else if (error.message.includes("Network")) {
+      title = "Connection Error";
+      description = "Please check your internet connection and try again.";
+    } else if (error.message.includes("Username") || error.message.includes("Password")) {
+      title = "Invalid Credentials";
+      description = error.message;
+    }
+
+    toast({
+      title,
+      description,
+      variant: "destructive",
+    });
+  };
+
   async function onSubmit(values: z.infer<typeof authSchema>, isLogin: boolean) {
     setIsLoading(true);
     try {
@@ -43,6 +78,8 @@ export default function Auth() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(values),
       });
+
+      const data = await res.json();
 
       if (res.ok) {
         if (isLogin) {
@@ -57,21 +94,22 @@ export default function Auth() {
           
           if (loginRes.ok) {
             setLocation("/");
+          } else {
+            throw new Error("Failed to log in after registration");
           }
         }
       } else {
-        const data = await res.json();
         throw new Error(data.message || "Authentication failed");
       }
     } catch (error) {
-      toast({
-        title: "Error",
-        description: (error as Error).message,
-        variant: "destructive",
-      });
+      handleAuthError(error);
     } finally {
       setIsLoading(false);
     }
+  }
+
+  if (user && !error) {
+    return null; // Don't render anything while redirecting
   }
 
   return (
@@ -83,7 +121,14 @@ export default function Auth() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="login" className="w-full">
+          <Tabs 
+            defaultValue="login" 
+            className="w-full"
+            onValueChange={() => {
+              form.reset();
+              setIsLoading(false);
+            }}
+          >
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="register">Register</TabsTrigger>
@@ -100,7 +145,7 @@ export default function Auth() {
                         <FormControl>
                           <Input {...field} className="border-purple-500" />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-400" />
                       </FormItem>
                     )}
                   />
@@ -117,7 +162,7 @@ export default function Auth() {
                             className="border-purple-500"
                           />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-400" />
                       </FormItem>
                     )}
                   />
@@ -143,7 +188,7 @@ export default function Auth() {
                         <FormControl>
                           <Input {...field} className="border-purple-500" />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-400" />
                       </FormItem>
                     )}
                   />
@@ -160,7 +205,7 @@ export default function Auth() {
                             className="border-purple-500"
                           />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="text-red-400" />
                       </FormItem>
                     )}
                   />
