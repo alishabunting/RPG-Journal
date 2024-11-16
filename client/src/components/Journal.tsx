@@ -10,6 +10,7 @@ import {
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { useToast } from "../hooks/use-toast";
+import { Loader2 } from "lucide-react";
 
 export function Journal() {
   const [entry, setEntry] = useState("");
@@ -18,7 +19,14 @@ export function Journal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async () => {
-    if (!entry.trim()) return;
+    if (!entry.trim()) {
+      toast({
+        title: "Empty Entry",
+        description: "Please write something in your journal",
+        variant: "destructive",
+      });
+      return;
+    }
     
     setIsSubmitting(true);
     try {
@@ -31,15 +39,17 @@ export function Journal() {
       if (!res.ok) throw new Error("Failed to save journal");
       
       setEntry("");
-      mutate("/api/journals");
+      await mutate("/api/journals");
+      await mutate("/api/quests"); // Refresh quests after new entry
+      
       toast({
         title: "Journal Entry Saved",
-        description: "A new quest has been generated!",
+        description: "Your thoughts have been recorded and new quests await!",
       });
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to save journal entry",
+        description: "Failed to save journal entry. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -58,7 +68,8 @@ export function Journal() {
             placeholder="Write about your day's adventures..."
             value={entry}
             onChange={(e) => setEntry(e.target.value)}
-            className="min-h-[200px] bg-transparent"
+            className="min-h-[200px] bg-transparent resize-none"
+            disabled={isSubmitting}
           />
         </CardContent>
         <CardFooter>
@@ -67,7 +78,14 @@ export function Journal() {
             disabled={isSubmitting}
             className="w-full"
           >
-            {isSubmitting ? "Recording..." : "Record Journey"}
+            {isSubmitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Recording...
+              </>
+            ) : (
+              "Record Journey"
+            )}
           </Button>
         </CardFooter>
       </Card>
@@ -82,6 +100,18 @@ export function Journal() {
             </CardHeader>
             <CardContent>
               <p className="whitespace-pre-wrap">{journal.content}</p>
+              {journal.tags && journal.tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {journal.tags.map((tag: string, index: number) => (
+                    <span
+                      key={index}
+                      className="px-2 py-1 text-xs rounded-full bg-purple-500/20 text-purple-300"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         ))}
