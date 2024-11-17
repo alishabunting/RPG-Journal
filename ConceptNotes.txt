@@ -7,7 +7,6 @@ A journaling application that gamifies real-life experiences by transforming dai
 
 ### 1. Character Creation
 - Simple character name input
-- Basic avatar selection or customization
 - Starting "class" or "role" based on initial journal entry analysis
 - Stats initialization (e.g., Wellness, Social, Growth, Achievement)
 
