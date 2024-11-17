@@ -1,20 +1,23 @@
-import { pgTable, text, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, jsonb, decimal } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const users = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  username: text("username").notNull(), // Removed .unique() constraint
+  username: text("username").notNull(),
   character: jsonb("character").default({
     name: "",
     avatar: "",
     class: "",
+    level: 1,
+    xp: 0,
     stats: {
       wellness: 1,
       social: 1,
       growth: 1,
       achievement: 1
-    }
+    },
+    achievements: []
   }).notNull()
 });
 
@@ -24,6 +27,8 @@ export const journals = pgTable("journals", {
   content: text("content").notNull(),
   mood: text("mood").notNull(),
   tags: text("tags").array(),
+  analysis: jsonb("analysis"),
+  characterProgression: jsonb("character_progression"),
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
@@ -33,6 +38,10 @@ export const quests = pgTable("quests", {
   title: text("title").notNull(),
   description: text("description").notNull(),
   category: text("category").notNull(),
+  difficulty: integer("difficulty").notNull(),
+  xpReward: integer("xp_reward").notNull(),
+  statRewards: jsonb("stat_rewards"),
+  timeframe: text("timeframe"),
   status: text("status").default("active").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at")
