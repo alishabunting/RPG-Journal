@@ -71,25 +71,38 @@ export function registerRoutes(app: Express) {
     const { content } = req.body;
 
     try {
+      // First analyze the entry
       const analysis = await analyzeEntry(content);
       
-      await db.insert(journals).values({
+      // Save the journal entry first
+      const [newJournal] = await db.insert(journals).values({
         userId,
         content,
         mood: analysis.mood,
         tags: analysis.tags,
-      });
+        analysis: analysis,
+        characterProgression: analysis.characterProgression,
+      }).returning();
 
-      const newQuests = await generateQuests(analysis);
-      await db.insert(quests).values(
-        newQuests.map(quest => ({
-          userId,
-          ...quest,
-        }))
-      );
+      // After successful journal save, attempt to generate and save quests
+      try {
+        const newQuests = await generateQuests(analysis);
+        if (newQuests && newQuests.length > 0) {
+          await db.insert(quests).values(
+            newQuests.map(quest => ({
+              userId,
+              ...quest,
+            }))
+          );
+          console.log(`Generated ${newQuests.length} quests for user: ${userId}`);
+        }
+      } catch (questError) {
+        // Log quest generation error but don't fail the request
+        console.error('Error generating/saving quests:', questError);
+      }
 
       console.log(`Journal entry created for user: ${userId}`);
-      res.sendStatus(201);
+      res.status(201).json(newJournal);
     } catch (error) {
       console.error('Error creating journal entry:', error);
       res.status(500).json({ message: "Error creating journal entry" });
