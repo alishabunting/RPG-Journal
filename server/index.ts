@@ -9,88 +9,70 @@ import { createServer } from "http";
 import "./auth.js";
 import { db, checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db/index.js";
 
-// Enhanced port configuration for Replit compatibility
-const PORT = parseInt(process.env.PORT || "3000", 10);
+// Enhanced port configuration for Replit
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.REPL_SLUG ? '0.0.0.0' : 'localhost';
 const isReplit = !!process.env.REPL_SLUG;
 const isDev = process.env.NODE_ENV !== "production";
 
-console.log("=== Starting Server Initialization ===");
+console.log("=== Starting Server Initialization on Replit ===");
 console.log("Environment:", {
   NODE_ENV: process.env.NODE_ENV,
   PORT,
+  HOST,
   IS_REPLIT: isReplit,
   REPL_SLUG: process.env.REPL_SLUG,
   REPL_OWNER: process.env.REPL_OWNER,
 });
 
-// Initialize Express app with error handling
+// Initialize Express app with Replit-optimized error handling
 const app = express();
 let server: any = null;
 let isShuttingDown = false;
 
-// Basic middleware setup with increased limits and optimized parsing
+// Replit-optimized middleware setup with increased limits
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: false, limit: '50mb' }));
 
-// Enhanced request logging middleware
+// Trust proxy for Replit environment
+app.set('trust proxy', isReplit ? 1 : 0);
+
+// Enhanced request logging middleware for Replit with timing
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (isShuttingDown) {
     res.set('Connection', 'close');
-    res.status(503).send('Server is shutting down');
+    res.status(503).send('Server is in maintenance mode');
     return;
   }
 
   const startTime = Date.now();
   const requestId = Math.random().toString(36).substring(7);
-  console.log(`[${requestId}] ${req.method} ${req.url} - Started`);
+  console.log(`[${requestId}] ${req.method} ${req.url} - Started on Replit`);
   
   res.on('finish', () => {
     const duration = Date.now() - startTime;
-    console.log(`[${requestId}] ${req.method} ${req.url} - ${res.statusCode} - ${duration}ms`);
+    console.log(`[${requestId}] ${req.method} ${req.url} - ${res.statusCode} - ${duration}ms on Replit`);
   });
   
   next();
 });
 
-// Enhanced error handler with Replit-specific logging
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error('Unhandled error:', {
-    error: err.message,
-    stack: isDev ? err.stack : undefined,
-    url: req.url,
-    method: req.method,
-    timestamp: new Date().toISOString(),
-    environment: isReplit ? 'replit' : 'local'
-  });
-
-  if (!res.headersSent) {
-    res.status(500).json({
-      error: 'Internal Server Error',
-      message: isDev ? err.message : 'An unexpected error occurred'
-    });
-  }
-});
-
 // Optimized CORS configuration for Replit
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Enhanced origin handling for Replit
-    const replitOrigin = isReplit ? [
-      `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`,
-      `https://${process.env.REPL_ID}.id.repl.co`
-    ] : [];
-
     const allowedOrigins = [
-      ...replitOrigin,
-      `http://localhost:${PORT}`,
-      `http://0.0.0.0:${PORT}`,
+      `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`,
+      `https://${process.env.REPL_ID}.id.repl.co`,
+      `https://${process.env.REPL_SLUG}--${PORT}.${process.env.REPL_OWNER}.repl.co`,
+      `https://${process.env.REPL_SLUG}-${PORT}.${process.env.REPL_OWNER}.repl.co`,
+      `http://${HOST}:${PORT}`,
       undefined
     ].filter(Boolean);
 
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.warn(`CORS blocked origin: ${origin}`, {
+      console.warn(`CORS blocked origin on Replit: ${origin}`, {
         allowedOrigins,
         isReplit,
         environment: process.env.NODE_ENV
@@ -101,12 +83,12 @@ const corsOptions = {
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 };
 
 app.use(cors(corsOptions));
 
-// Enhanced health check endpoint with detailed diagnostics
+// Enhanced health check endpoint with Replit diagnostics
 app.get('/health', async (req: Request, res: Response) => {
   try {
     if (isShuttingDown) {
@@ -125,9 +107,9 @@ app.get('/health', async (req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
       server: {
         port: PORT,
+        host: HOST,
         uptime: process.uptime(),
-        environment: process.env.NODE_ENV || 'development',
-        is_replit: isReplit,
+        environment: 'replit',
         memory: {
           used: Math.round(memoryUsage.heapUsed / 1024 / 1024),
           total: Math.round(memoryUsage.heapTotal / 1024 / 1024),
@@ -138,7 +120,7 @@ app.get('/health', async (req: Request, res: Response) => {
       database: dbStatus
     });
   } catch (error) {
-    console.error('Health check failed:', error);
+    console.error('Health check failed on Replit:', error);
     res.status(500).json({
       status: 'error',
       timestamp: new Date().toISOString(),
@@ -147,9 +129,9 @@ app.get('/health', async (req: Request, res: Response) => {
   }
 });
 
-// Enhanced database initialization with better error handling
+// Replit-optimized database initialization with better retry logic
 async function initializeDatabase() {
-  console.log("Initializing database connection...");
+  console.log("Initializing database connection on Replit...");
   let retries = 5;
   let delay = 1000;
   
@@ -157,14 +139,14 @@ async function initializeDatabase() {
     try {
       await checkConnection();
       const status = await getPoolStatus();
-      console.log("Database connection successful:", status.poolStats);
+      console.log("Database connection successful on Replit:", status.poolStats);
       return true;
     } catch (error) {
       retries--;
-      console.error(`Database connection attempt failed (${retries} attempts left):`, error);
+      console.error(`Database connection attempt failed on Replit (${retries} attempts left):`, error);
       
       if (retries === 0) {
-        console.error("Database connection failed after all retries");
+        console.error("Database connection failed after all retries on Replit");
         return false;
       }
       
@@ -176,9 +158,9 @@ async function initializeDatabase() {
   return false;
 }
 
-// Enhanced session initialization with Replit optimizations
+// Replit-optimized session initialization with better error handling
 async function initializeSession() {
-  console.log("Initializing session management...");
+  console.log("Initializing session management on Replit...");
   const PgSession = pgSimple(session);
   
   try {
@@ -198,7 +180,6 @@ async function initializeSession() {
       pruneSessionInterval: 60
     });
 
-    // Configure session middleware with Replit-specific settings
     app.use(session({
       store: sessionStore,
       secret: process.env.SESSION_SECRET || process.env.REPL_ID || "rpg-journal-secret",
@@ -207,170 +188,175 @@ async function initializeSession() {
       name: 'rpg.session',
       cookie: {
         maxAge: 24 * 60 * 60 * 1000,
-        secure: isReplit || process.env.NODE_ENV === 'production',
+        secure: isReplit,
         sameSite: isReplit ? 'none' : 'lax',
-        domain: isReplit ? `${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co` : undefined
+        domain: isReplit ? `.${process.env.REPL_OWNER}.repl.co` : undefined
       }
     }));
 
     app.use(passport.initialize());
     app.use(passport.session());
     
-    console.log("Session management initialized successfully");
+    console.log("Session management initialized successfully on Replit");
     return true;
   } catch (error) {
-    console.error("Session initialization failed:", error);
+    console.error("Session initialization failed on Replit:", error);
     return false;
   }
 }
 
-// Improved server startup sequence with Replit optimizations
+// Replit-optimized server startup sequence with better synchronization
 async function startServer() {
   try {
-    console.log("Starting server initialization...");
+    console.log("Starting server initialization on Replit...");
     
+    // Initialize database first
     if (!await initializeDatabase()) {
-      throw new Error("Database initialization failed");
+      throw new Error("Database initialization failed on Replit");
     }
 
+    // Initialize session after database is ready
     if (!await initializeSession()) {
-      throw new Error("Session initialization failed");
+      throw new Error("Session initialization failed on Replit");
     }
 
-    console.log("Registering routes...");
+    console.log("Registering routes on Replit...");
     registerRoutes(app);
 
     return new Promise((resolve, reject) => {
       const startTimeout = setTimeout(() => {
-        console.error("Server startup timed out");
-        reject(new Error("Server failed to start within 30 seconds"));
-      }, 30000);
+        console.error("Server startup timed out on Replit");
+        reject(new Error("Server failed to start within 15 seconds"));
+      }, 15000);
 
       try {
-        // Create server instance
         server = createServer(app);
 
-        // Set up error handling before starting
         server.on('error', (error: Error) => {
           clearTimeout(startTimeout);
-          console.error('Server error:', error);
+          console.error('Server error on Replit:', error);
           reject(error);
         });
 
-        // Set up Vite or static serving after server creation
-        if (isDev) {
-          console.log("Setting up Vite development server...");
-          setupVite(app, server)
-            .then(() => {
-              // Start server after Vite is set up
-              server.listen(PORT, "0.0.0.0", () => {
-                clearTimeout(startTimeout);
-                console.log(`Server running on port ${PORT}`);
-                if (isReplit) {
-                  console.log(`Available at: https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`);
-                }
-                resolve(server);
-              });
-            })
-            .catch(reject);
-        } else {
-          console.log("Setting up static file serving...");
-          serveStatic(app);
-          
-          // Start server for production
-          server.listen(PORT, "0.0.0.0", () => {
+        // Start server with retries
+        const startServerWithRetry = (retryCount = 0) => {
+          server.listen(PORT, HOST, async () => {
             clearTimeout(startTimeout);
-            console.log(`Server running on port ${PORT}`);
-            if (isReplit) {
-              console.log(`Available at: https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`);
+            console.log(`Server running on Replit at ${HOST}:${PORT}`);
+            
+            if (process.env.REPL_SLUG && process.env.REPL_OWNER) {
+              console.log(`Available at: https://${process.env.REPL_SLUG}--${PORT}.${process.env.REPL_OWNER}.repl.co`);
             }
+
+            // Development server setup
+            if (isDev) {
+              try {
+                console.log("Setting up Vite development server on Replit...");
+                await setupVite(app);
+                console.log("Vite development server setup complete");
+              } catch (error) {
+                console.error("Vite setup failed:", error);
+              }
+            } else {
+              console.log("Setting up static file serving on Replit...");
+              serveStatic(app);
+            }
+            
             resolve(server);
+          }).on('error', (err: any) => {
+            if (err.code === 'EADDRINUSE' && retryCount < 3) {
+              console.log(`Port ${PORT} in use, retrying in 1s...`);
+              setTimeout(() => {
+                server.close();
+                startServerWithRetry(retryCount + 1);
+              }, 1000);
+            } else {
+              clearTimeout(startTimeout);
+              reject(err);
+            }
           });
-        }
+        };
+
+        startServerWithRetry();
       } catch (error) {
         clearTimeout(startTimeout);
-        console.error('Failed to start server:', error);
+        console.error('Failed to start server on Replit:', error);
         reject(error);
       }
     });
   } catch (error) {
-    console.error("Fatal server error:", error);
+    console.error("Fatal server error on Replit:", error);
     throw error;
   }
 }
 
-// Start the server with enhanced error handling
-console.log("Initiating server startup sequence...");
+// Start the server with Replit-optimized error handling
+console.log("Initiating server startup sequence on Replit...");
 let startupComplete = false;
 
 startServer()
   .then(() => {
-    console.log("Server started successfully");
+    console.log("Server started successfully on Replit");
     startupComplete = true;
     startHealthCheck();
   })
   .catch((error) => {
-    console.error("Server failed to start:", error);
+    console.error("Server failed to start on Replit:", error);
     process.exit(1);
   });
 
-// Enhanced cleanup function with proper shutdown coordination
-const cleanup = async () => {
+// Enhanced cleanup handlers
+async function cleanup() {
   if (isShuttingDown) {
-    console.log("Cleanup already in progress");
+    console.log("Cleanup already in progress on Replit");
     return;
   }
 
   if (!startupComplete) {
-    console.log("Ignoring cleanup during startup/restart");
+    console.log("Ignoring cleanup during startup/restart on Replit");
     return;
   }
 
   isShuttingDown = true;
-  console.log("Starting graceful shutdown...");
+  console.log("Starting graceful shutdown on Replit...");
   stopHealthCheck();
 
   try {
-    // Stop accepting new connections
     if (server) {
       await new Promise<void>((resolve) => {
         const forceShutdownTimeout = setTimeout(() => {
-          console.log("Force shutdown initiated");
+          console.log("Force shutdown initiated on Replit");
           resolve();
-        }, 5000);
+        }, 3000);
 
         server.close(() => {
           clearTimeout(forceShutdownTimeout);
-          console.log("Server closed successfully");
+          console.log("Server closed successfully on Replit");
           resolve();
         });
       });
     }
 
-    // Wait for existing connections to complete (up to 5 seconds)
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // Close database connections
     if (pool) {
       try {
         await pool.end();
-        console.log("Database connections closed");
+        console.log("Database connections closed on Replit");
       } catch (error) {
         if (error instanceof Error && error.message !== 'Called end on pool more than once') {
-          console.error("Error closing database connections:", error);
+          console.error("Error closing database connections on Replit:", error);
         }
       }
     }
 
-    console.log("Shutdown completed successfully");
+    console.log("Shutdown completed successfully on Replit");
     process.exit(0);
   } catch (error) {
-    console.error("Error during cleanup:", error);
+    console.error("Error during cleanup on Replit:", error);
     process.exit(1);
   }
-};
+}
 
-// Register cleanup handlers with debouncing
+// Register cleanup handlers with improved debouncing
 let cleanupTimeout: NodeJS.Timeout | null = null;
 const debouncedCleanup = () => {
   if (cleanupTimeout) {
@@ -382,22 +368,22 @@ const debouncedCleanup = () => {
 process.on('SIGTERM', debouncedCleanup);
 process.on('SIGINT', debouncedCleanup);
 
-// Enhanced error handlers with proper logging
+// Enhanced error handlers with Replit-specific logging
 process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception:", {
+  console.error("Uncaught Exception on Replit:", {
     error: err.message,
     stack: err.stack,
     timestamp: new Date().toISOString(),
-    environment: isReplit ? 'replit' : 'local'
+    environment: 'replit'
   });
   debouncedCleanup();
 });
 
 process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled Rejection:", {
+  console.error("Unhandled Rejection on Replit:", {
     reason,
     timestamp: new Date().toISOString(),
-    environment: isReplit ? 'replit' : 'local'
+    environment: 'replit'
   });
   debouncedCleanup();
 });
