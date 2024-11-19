@@ -2,215 +2,203 @@ import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import passport from "passport";
 import pgSimple from "connect-pg-simple";
-import { registerRoutes } from "./routes";
-import { setupVite, serveStatic } from "./vite";
+import cors from "cors";
+import { registerRoutes } from "./routes.js";
+import { setupVite, serveStatic } from "./vite.js";
 import { createServer } from "http";
-import "./auth";
-import { db, checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db";
+import "./auth.js";
+import { db, checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db/index.js";
+import { testOpenAIConnection } from "./openai.js";
+
+console.log("=== Starting Server Initialization ===");
 
 const app = express();
 
 // Enhanced logging middleware with request tracking
-app.use((req: Request, _res: Response, next: NextFunction) => {
+console.log("Setting up middleware...");
+app.use((req: Request, res: Response, next: NextFunction) => {
   const requestId = Math.random().toString(36).substring(7);
-  console.log(`${new Date().toISOString()} [${requestId}] [${req.method}] ${req.url}`);
+  const startTime = Date.now();
+  
+  console.log(`[${requestId}] ${req.method} ${req.url} - Started`);
+  
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    console.log(`[${requestId}] ${req.method} ${req.url} - Completed (${duration}ms) - Status: ${res.statusCode}`);
+  });
+  
   next();
 });
+
+console.log("Configuring CORS...");
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? false : true,
+  credentials: true
+}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Session configuration with enhanced options
+// Enhanced session store setup with detailed error handling
+console.log("Setting up session store...");
 const PgSession = pgSimple(session);
 
-console.log("Initializing session store...");
+function handleSessionError(error: Error): void {
+  console.error('Session store error:', {
+    message: error.message,
+    stack: error.stack,
+    timestamp: new Date().toISOString()
+  });
+}
+
 const sessionStore = new PgSession({
   pool,
   createTableIfMissing: true,
   tableName: 'session',
-  schemaName: 'public',
-  pruneSessionInterval: 60, // Prune expired sessions every 60 seconds
-  disableTouch: false, // Enable session touches to prevent premature expiration
-  // Enhanced error handling for session store
-  errorLog: (error) => {
-    console.error('Session store error:', error);
-  }
+  pruneSessionInterval: 60,
+  errorLog: handleSessionError
 });
 
-// Session store error handling
-sessionStore.on('error', (error) => {
-  console.error('Session store error:', error);
+sessionStore.on('error', (error: Error) => {
+  handleSessionError(error);
+  checkConnection().catch(err => {
+    console.error('Failed to recover from session store error:', err);
+  });
 });
 
 const sessionSecret = process.env.SESSION_SECRET || process.env.REPLIT_ID || "rpg-journal-secret";
 
-// Enhanced session configuration
+console.log("Configuring session middleware...");
 app.use(
   session({
     store: sessionStore,
     secret: sessionSecret,
-    name: 'rpg.sid', // Custom cookie name
     resave: false,
-    rolling: true, // Reset maxAge on every response
     saveUninitialized: false,
     cookie: {
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      maxAge: 30 * 24 * 60 * 60 * 1000,
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
-      sameSite: 'lax',
-      path: '/'
-    },
-    // Enable session store keep-alive
-    unset: 'keep'
+      sameSite: 'lax'
+    }
   })
 );
 
-// Initialize passport
-console.log("Initializing passport...");
+console.log("Initializing Passport...");
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Enhanced pool status monitoring endpoint
-app.get('/api/health/pool', async (_req: Request, res: Response) => {
-  try {
-    const status = await getPoolStatus();
-    res.json(status);
-  } catch (error) {
-    console.error('Failed to get pool status:', error);
-    res.status(500).json({ error: 'Failed to get pool status' });
-  }
-});
-
-// Health check endpoint with enhanced metrics
-app.get('/api/health', async (_req: Request, res: Response) => {
-  try {
-    const poolStatus = await getPoolStatus();
-    const sessionCount = await getSessionCount();
-    res.json({ 
-      status: 'ok', 
-      timestamp: new Date().toISOString(),
-      env: process.env.NODE_ENV || 'development',
-      pool: poolStatus,
-      sessions: {
-        count: sessionCount
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      status: 'error',
-      message: 'Health check failed',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// Session count helper function with retry logic
-async function getSessionCount() {
-  let retries = 3;
-  while (retries > 0) {
-    try {
-      const result = await pool.query('SELECT COUNT(*) FROM session');
-      return parseInt(result.rows[0].count);
-    } catch (error) {
-      retries--;
-      if (retries === 0) {
-        console.error('Failed to get session count after all retries:', error);
-        return -1;
-      }
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-  return -1;
-}
+console.log("Registering routes...");
+registerRoutes(app);
 
 // Enhanced error handling middleware
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error("Server error:", err);
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  const errorId = Math.random().toString(36).substring(7);
+  console.error('Server error:', {
+    errorId,
+    name: err.name,
+    message: err.message,
+    stack: err.stack,
+    url: req.url,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
+  
   res.status(500).json({ 
     message: "Internal server error",
-    code: err.name,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    errorId,
+    code: err.name
   });
 });
 
-// Session cleanup on shutdown with retry logic
-async function cleanupSessions() {
-  let retries = 3;
-  while (retries > 0) {
-    try {
-      await pool.query('DELETE FROM session WHERE expire < NOW()');
-      console.log('Expired sessions cleaned up');
-      break;
-    } catch (error) {
-      retries--;
-      if (retries === 0) {
-        console.error('Failed to cleanup sessions after all retries:', error);
-        break;
-      }
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-}
-
-(async () => {
+async function startServer() {
   try {
+    console.log("=== Starting Server ===");
+    
+    // Check database connection
     console.log("Checking database connection...");
     await checkConnection();
+    
+    const poolStatus = await getPoolStatus();
+    console.log("Database pool status:", poolStatus);
 
-    // Clean up expired sessions on startup
-    await cleanupSessions();
+    // Test OpenAI connection
+    console.log("Testing OpenAI connection...");
+    await testOpenAIConnection();
 
-    console.log("Registering routes...");
-    registerRoutes(app);
+    console.log("Creating HTTP server...");
     const server = createServer(app);
 
-    // Error handling for uncaught exceptions
-    process.on("uncaughtException", (err) => {
-      console.error("Uncaught Exception:", err);
-      stopHealthCheck(); // Stop health check on uncaught exception
-    });
-
-    process.on("unhandledRejection", (reason, promise) => {
-      console.error("Unhandled Rejection at:", promise, "reason:", reason);
-    });
-
-    if (app.get("env") === "development") {
-      console.log("Setting up Vite in development mode...");
+    if (process.env.NODE_ENV === "development") {
+      console.log("Setting up Vite development server...");
       await setupVite(app, server);
     } else {
       console.log("Setting up static file serving...");
       serveStatic(app);
     }
 
-    const PORT = 5000;
-    server.listen(PORT, "0.0.0.0", () => {
-      const formattedTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: true,
-      });
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        console.error("Server startup timeout - failed to bind to port");
+        reject(new Error("Server startup timeout"));
+      }, 30000);
 
-      console.log(`${formattedTime} [express] Server started successfully on port ${PORT}`);
-      startHealthCheck(); // Start health check after server starts
+      const PORT = parseInt(process.env.PORT || "5000", 10);
+
+      try {
+        server.on('error', (error: any) => {
+          clearTimeout(timeoutId);
+          if (error.code === 'EADDRINUSE') {
+            console.error(`Port ${PORT} is already in use`);
+          }
+          console.error("Server startup error:", error);
+          reject(error);
+        });
+
+        server.listen(PORT, "0.0.0.0", () => {
+          clearTimeout(timeoutId);
+          console.log(`=== Server Successfully Started on Port ${PORT} ===`);
+          startHealthCheck();
+          resolve(server);
+        });
+      } catch (error) {
+        clearTimeout(timeoutId);
+        console.error("Server listen error:", error);
+        reject(error);
+      }
     });
   } catch (error) {
-    console.error("Failed to start server:", error);
-    process.exit(1);
+    console.error("Fatal server startup error:", error);
+    throw error;
   }
-})();
+}
 
-// Cleanup on shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received. Cleaning up...');
+// Start the server
+console.log("Initiating server startup...");
+startServer().catch((error) => {
+  console.error("Server failed to start:", error);
+  process.exit(1);
+});
+
+// Graceful shutdown handlers
+process.on('SIGTERM', () => {
+  console.log("SIGTERM received, shutting down...");
   stopHealthCheck();
-  await cleanupSessions();
   process.exit(0);
 });
 
-process.on('SIGINT', async () => {
-  console.log('SIGINT received. Cleaning up...');
+process.on('SIGINT', () => {
+  console.log("SIGINT received, shutting down...");
   stopHealthCheck();
-  await cleanupSessions();
   process.exit(0);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+  stopHealthCheck();
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled Rejection:", reason);
 });

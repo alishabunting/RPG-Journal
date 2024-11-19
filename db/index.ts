@@ -1,8 +1,10 @@
 import { drizzle } from "drizzle-orm/neon-serverless";
-import { Pool } from "@neondatabase/serverless";
+import { Pool, PoolClient } from "@neondatabase/serverless";
 import { WebSocket } from "ws";
-import * as schema from "./schema";
+import * as schema from "./schema.js";
 import { neonConfig } from '@neondatabase/serverless';
+
+console.log("=== Database Initialization: Starting ===");
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -11,8 +13,9 @@ if (!process.env.DATABASE_URL) {
 }
 
 // Configure WebSocket globally for Neon
+console.log("Configuring Neon database connection...");
 neonConfig.webSocketConstructor = WebSocket;
-neonConfig.poolQueryViaFetch = true; // Enable fetch-based querying for better performance
+neonConfig.poolQueryViaFetch = true;
 
 // Retry configuration
 const RETRY_CONFIG = {
@@ -23,42 +26,55 @@ const RETRY_CONFIG = {
   healthCheckIntervalMs: 30000,
 };
 
+console.log("Initializing connection pool with configuration:", {
+  maxConnections: 20,
+  idleTimeout: '60 seconds',
+  connectionTimeout: '30 seconds',
+  maxUses: 15000
+});
+
 // Configure connection pool optimized for serverless environment
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 20, // Increased for better concurrent performance
-  idleTimeoutMillis: 60000, // 60 seconds idle timeout for better connection reuse
+  max: 20,
+  idleTimeoutMillis: 60000,
   connectionTimeoutMillis: RETRY_CONFIG.connectionTimeoutMs,
-  maxUses: 15000, // Increased max uses per connection for better efficiency
+  maxUses: 15000,
   ssl: {
     rejectUnauthorized: false
   }
-});
+}) as any;
 
-// Enhanced pool event listeners with detailed logging and retry logic
-pool.on('error', async (err) => {
-  console.error('Connection pool error:', err.message, '\nStack:', err.stack);
+// Enhanced pool event listeners with detailed logging
+pool.on('error', async (err: Error) => {
+  console.error('=== CRITICAL: Connection Pool Error ===');
+  console.error('Error details:', err.message);
+  console.error('Stack:', err.stack);
   await handlePoolError(err);
 });
 
-pool.on('connect', (client) => {
-  console.log(`New client connected to pool (${pool.totalCount} total connections)`);
-  client.on('error', async (err) => {
-    console.error('Client connection error:', err.message);
+pool.on('connect', (client: PoolClient) => {
+  console.log('=== New Database Connection Established ===');
+  console.log(`Pool status: ${pool.totalCount} total connections, ${pool.idleCount} idle`);
+  
+  client.on('error', async (err: Error) => {
+    console.error('=== Client Connection Error ===');
+    console.error('Error details:', err.message);
     await handleClientError(client, err);
   });
 });
 
 pool.on('acquire', () => {
   const { totalCount, idleCount, waitingCount } = pool;
-  console.debug(`Client acquired from pool (total: ${totalCount}, idle: ${idleCount}, waiting: ${waitingCount})`);
+  console.log(`Connection acquired from pool (total: ${totalCount}, idle: ${idleCount}, waiting: ${waitingCount})`);
 });
 
 pool.on('remove', () => {
-  console.debug(`Client removed from pool (${pool.totalCount} connections remaining)`);
+  console.log(`Connection removed from pool (${pool.totalCount} remaining)`);
 });
 
 // Create database client with connection pooling
+console.log("Initializing Drizzle ORM...");
 export const db = drizzle(pool, { schema });
 
 // Enhanced connection retry logic with exponential backoff
@@ -71,7 +87,6 @@ async function retryWithBackoff(operation: () => Promise<any>, retryCount = 0): 
       throw error;
     }
 
-    // Calculate delay with exponential backoff and jitter
     const baseDelay = Math.min(
       RETRY_CONFIG.initialDelayMs * Math.pow(2, retryCount),
       RETRY_CONFIG.maxDelayMs
@@ -103,7 +118,7 @@ async function handlePoolError(error: Error) {
 }
 
 // Enhanced client error handler
-async function handleClientError(client: any, error: Error) {
+async function handleClientError(client: PoolClient, error: Error) {
   console.error('Client error detected, attempting recovery...', error);
   try {
     client.release(error);

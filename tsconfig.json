@@ -1,17 +1,23 @@
 {
   "compilerOptions": {
-    "noEmit": true,
-    "module": "ESNext",
-    "strict": true,
-    "lib": ["esnext", "dom", "dom.iterable"],
-    "jsx": "preserve",
+    "target": "ES2020",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "esModuleInterop": true,
+    "strict": true,
     "skipLibCheck": true,
-    "allowImportingTsExtensions": true,
-    "moduleResolution": "bundler",
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "dist",
+    "sourceMap": true,
+    "declaration": true,
+    "allowJs": true,
+    "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["./client/src/*"]
-    }
-  }
+    },
+    "lib": ["esnext", "dom"]
+  },
+  "include": ["server/**/*", "db/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
