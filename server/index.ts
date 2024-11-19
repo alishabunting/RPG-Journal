@@ -9,8 +9,9 @@ import { createServer } from "http";
 import "./auth.js";
 import { db, checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db/index.js";
 
-// Enhanced port configuration for Replit
-const PORT = process.env.PORT || 3000;
+// Enhanced port configuration for Replit with external port mapping
+const PORT = Number(process.env.PORT) || 3000;
+const EXTERNAL_PORT = Number(process.env.EXTERNAL_PORT) || 3001;
 const HOST = process.env.REPL_SLUG ? '0.0.0.0' : 'localhost';
 const isReplit = !!process.env.REPL_SLUG;
 const isDev = process.env.NODE_ENV !== "production";
@@ -19,10 +20,12 @@ console.log("=== Starting Server Initialization on Replit ===");
 console.log("Environment:", {
   NODE_ENV: process.env.NODE_ENV,
   PORT,
+  EXTERNAL_PORT,
   HOST,
   IS_REPLIT: isReplit,
   REPL_SLUG: process.env.REPL_SLUG,
   REPL_OWNER: process.env.REPL_OWNER,
+  SERVER_URL: isReplit ? `https://${process.env.REPL_SLUG}--${EXTERNAL_PORT}.${process.env.REPL_OWNER}.repl.co` : `http://${HOST}:${PORT}`
 });
 
 // Initialize Express app with Replit-optimized error handling
@@ -63,21 +66,23 @@ const corsOptions = {
     const allowedOrigins = [
       `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`,
       `https://${process.env.REPL_ID}.id.repl.co`,
-      `https://${process.env.REPL_SLUG}--${PORT}.${process.env.REPL_OWNER}.repl.co`,
-      `https://${process.env.REPL_SLUG}-${PORT}.${process.env.REPL_OWNER}.repl.co`,
+      `https://${process.env.REPL_SLUG}--${EXTERNAL_PORT}.${process.env.REPL_OWNER}.repl.co`,
+      `https://${process.env.REPL_SLUG}-${EXTERNAL_PORT}.${process.env.REPL_OWNER}.repl.co`,
       `http://${HOST}:${PORT}`,
-      undefined
+      `http://localhost:${PORT}`,
+      `http://localhost:${EXTERNAL_PORT}`,
+      undefined // Allow requests with no origin (like mobile apps or curl requests)
     ].filter(Boolean);
 
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.warn(`CORS blocked origin on Replit: ${origin}`, {
+      console.warn(`CORS blocked origin: ${origin}`, {
         allowedOrigins,
         isReplit,
         environment: process.env.NODE_ENV
       });
-      callback(new Error('Not allowed by CORS'));
+      callback(null, false);
     }
   },
   credentials: true,
@@ -245,7 +250,7 @@ async function startServer() {
             console.log(`Server running on Replit at ${HOST}:${PORT}`);
             
             if (process.env.REPL_SLUG && process.env.REPL_OWNER) {
-              console.log(`Available at: https://${process.env.REPL_SLUG}--${PORT}.${process.env.REPL_OWNER}.repl.co`);
+              console.log(`Available at: https://${process.env.REPL_SLUG}--${EXTERNAL_PORT}.${process.env.REPL_OWNER}.repl.co`);
             }
 
             // Development server setup

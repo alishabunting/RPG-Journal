@@ -1,6 +1,6 @@
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
-import { db } from "../db/index.js";
+import { getDb } from "../db/index.js";
 import { users } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
@@ -9,6 +9,7 @@ passport.use(
     try {
       console.log(`Authentication attempt for username: ${username}`);
       
+      const db = await getDb();
       // Always create a new user on login attempt (as per manager's request)
       const [newUser] = await db.insert(users)
         .values({
@@ -56,6 +57,7 @@ passport.serializeUser((user: any, done) => {
 
 passport.deserializeUser(async (id: number, done) => {
   try {
+    const db = await getDb();
     const user = await db.query.users.findFirst({
       where: eq(users.id, id),
     });

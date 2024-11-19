@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import passport from "passport";
-import { db, pool } from "../db/index.js";
+import { getDb, pool, getPoolStatus } from "../db/index.js";
 import { users, journals, quests } from "../db/schema.js";
 import { eq, desc, and } from "drizzle-orm";
 import { analyzeEntry, generateQuests, calculateQuestCompletion } from "./openai.js";
@@ -8,13 +8,14 @@ import { ensureAuthenticated } from "./auth.js";
 import type { User, Journal, Quest } from "../db/schema.js";
 import { PoolClient } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
+import { sql } from "drizzle-orm";
 
 // Enhanced character progress update with validation and error handling
 async function updateCharacterProgress(userId: number, analysis: any, client?: PoolClient) {
-  const queryRunner = client ? drizzle(client, { schema: { users, journals, quests } }) : db;
+  const db = client ? drizzle(client, { schema: { users, journals, quests } }) : await getDb();
   
   try {
-    const user = await queryRunner.select().from(users).where(eq(users.id, userId)).limit(1).execute().then(rows => rows[0]);
+    const user = await db.select().from(users).where(eq(users.id, userId)).limit(1).execute().then(rows => rows[0]);
 
     if (!user) {
       throw new Error(`User not found: ${userId}`);
@@ -65,7 +66,7 @@ async function updateCharacterProgress(userId: number, analysis: any, client?: P
       ]
     };
 
-    await queryRunner.update(users)
+    await db.update(users)
       .set({ character: updatedCharacter })
       .where(eq(users.id, userId))
       .execute();
@@ -101,14 +102,40 @@ async function generateQuestsWithRetry(analysis: any, maxRetries = 3): Promise<Q
 }
 
 export function registerRoutes(app: Express) {
+  // Add connection status endpoint at the top
+  app.get("/api/db/status", async (req, res) => {
+    try {
+      const poolStats = await getPoolStatus();
+      const db = await getDb(); // This will trigger lazy loading
+      await db.select({ value: sql`1` }).execute(); // Verify connection
+      
+      res.json({
+        status: 'connected',
+        poolStats,
+        message: 'Database connection verified'
+      });
+    } catch (error) {
+      console.error('Database status check failed:', error);
+      res.status(500).json({
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        poolStats: await getPoolStatus()
+      });
+    }
+  });
+
   // Auth routes
   app.post("/api/auth/login", passport.authenticate("local"), (req, res) => {
     console.log(`Login successful for user: ${(req.user as User).username}`);
     res.json(req.user);
   });
 
-  app.get("/api/auth/me", ensureAuthenticated, (req, res) => {
-    res.json(req.user);
+  app.get("/api/auth/me", ensureAuthenticated, async (req, res) => {
+    const db = await getDb();
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, (req.user as User).id),
+    });
+    res.json(user);
   });
 
   app.post("/api/auth/logout", (req, res) => {
@@ -127,6 +154,7 @@ export function registerRoutes(app: Express) {
   app.put("/api/character", ensureAuthenticated, async (req, res) => {
     const userId = (req.user as User).id;
     try {
+      const db = await getDb();
       await db
         .update(users)
         .set({ character: req.body })
@@ -146,6 +174,7 @@ export function registerRoutes(app: Express) {
     
     // Get a client from the pool for transaction
     const client = await pool.connect();
+    const db = drizzle(client, { schema: { users, journals, quests } });
     
     try {
       await client.query('BEGIN'); // Start transaction
@@ -238,6 +267,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/quests", ensureAuthenticated, async (req, res) => {
     const userId = (req.user as User).id;
     try {
+      const db = await getDb();
       const userQuests = await db.query.quests.findMany({
         where: eq(quests.userId, userId),
         orderBy: [desc(quests.createdAt)],
@@ -255,6 +285,7 @@ export function registerRoutes(app: Express) {
     const userId = (req.user as User).id;
     
     const client = await pool.connect();
+    const db = drizzle(client, { schema: { users, journals, quests } });
     
     try {
       await client.query('BEGIN');
