@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/neon-serverless";
-import { Pool, PoolClient } from "@neondatabase/serverless";
+import { Pool } from "@neondatabase/serverless";
+import type { PoolClient } from "@neondatabase/serverless/types";
 import { WebSocket } from "ws";
 import * as schema from "./schema.js";
 import { neonConfig } from '@neondatabase/serverless';
@@ -18,341 +19,357 @@ console.log("Configuring Neon database connection...");
 neonConfig.webSocketConstructor = WebSocket;
 neonConfig.poolQueryViaFetch = true;
 neonConfig.useSecureWebSocket = true;
-neonConfig.pipeliningSupportValue = false; // Disable pipelining for better stability
-neonConfig.fetchConnectionCache = true; // Enable connection caching
+neonConfig.pipeliningSupportValue = false;
 
-// Replit-optimized retry configuration
-const RETRY_CONFIG = {
+// Enhanced pool configuration with auto-scaling
+const POOL_CONFIG = {
+  minConnections: 1,
+  maxConnections: 3, // Reduced max connections for Replit environment
+  initialConnections: 1,
+  scaleUpStep: 1,
+  scaleDownStep: 1,
+  scaleUpThreshold: 0.8,
+  scaleDownThreshold: 0.2,
+  healthCheckInterval: 60000, // Increased interval to reduce overhead
+  metricsWindow: 120000, // Increased window for better decision making
+  cooldownPeriod: 60000, // Increased cooldown to prevent rapid scaling
+  connectionTimeout: 10000, // Increased timeout for Replit environment
   maxRetries: 3,
-  initialDelayMs: 1000,
-  maxDelayMs: 5000,
-  connectionTimeoutMs: 10000,
-  healthCheckIntervalMs: 30000,
-  maxConnections: 5,
-  idleTimeoutMs: 30000,
-  acquireTimeoutMs: 60000
+  retryDelay: 1000,
 };
 
-// Connection state tracking
-type ConnectionState = {
-  isInitializing: boolean;
-  lastInitAttempt: number;
-  connectionErrors: number;
-  lastError?: Error;
-};
-
-const state: ConnectionState = {
-  isInitializing: false,
-  lastInitAttempt: 0,
-  connectionErrors: 0
-};
-
-// Enhanced lazy loading with connection pooling
-let pool: Pool | null = null;
-let db: ReturnType<typeof drizzle> | null = null;
-const INIT_COOLDOWN = 5000; // 5 seconds cooldown between initialization attempts
-
-// Verify pool connection
-async function verifyPoolConnection(client: PoolClient): Promise<boolean> {
-  try {
-    await client.query('SELECT 1');
-    return true;
-  } catch (error) {
-    console.error('Pool connection verification failed:', error);
-    return false;
-  }
+// Pool metrics tracking
+interface PoolMetrics {
+  timestamp: number;
+  totalConnections: number;
+  activeConnections: number;
+  idleConnections: number;
+  waitingRequests: number;
+  responseTime: number;
+  errors: number;
 }
 
-// Check database connection
-export async function checkConnection(): Promise<boolean> {
-  try {
-    const poolInstance = await initializePool();
-    const client = await poolInstance.connect();
-    const isValid = await verifyPoolConnection(client);
-    client.release();
-    return isValid;
-  } catch (error) {
-    console.error("Database connection check failed:", error);
-    return false;
-  }
-}
+class PoolManager {
+  private pool: Pool | null = null;
+  private metrics: PoolMetrics[] = [];
+  private lastScaling: number = 0;
+  private currentSize: number = POOL_CONFIG.initialConnections;
+  private isScaling: boolean = false;
+  private healthCheckTimer: NodeJS.Timeout | null = null;
+  private initPromise: Promise<void> | null = null;
 
-// Enhanced pool initialization with connection verification and cooldown
-async function initializePool(): Promise<Pool> {
-  const now = Date.now();
+  async initialize() {
+    if (this.initPromise) return this.initPromise;
 
-  if (state.isInitializing) {
-    console.log("Pool initialization already in progress, waiting...");
-    while (state.isInitializing) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    if (pool) return pool;
-  }
-
-  // Check existing pool
-  if (pool) {
-    try {
-      const client = await pool.connect();
-      const isValid = await verifyPoolConnection(client);
-      client.release();
-      if (isValid) {
-        console.log("Existing pool verified successfully");
-        return pool;
-      }
-    } catch (error) {
-      console.warn("Existing pool verification failed:", error);
-    }
-    
-    // Reset pool if verification failed
-    try {
-      await pool.end();
-    } catch (error) {
-      console.warn("Error ending existing pool:", error);
-    }
-    pool = null;
-    db = null;
-  }
-
-  // Respect cooldown period
-  const timeSinceLastAttempt = now - state.lastInitAttempt;
-  if (timeSinceLastAttempt < INIT_COOLDOWN) {
-    await new Promise(resolve => 
-      setTimeout(resolve, INIT_COOLDOWN - timeSinceLastAttempt)
-    );
-  }
-
-  state.isInitializing = true;
-  state.lastInitAttempt = now;
-
-  try {
-    console.log("Initializing connection pool with Replit-optimized configuration");
-    
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: RETRY_CONFIG.maxConnections,
-      idleTimeoutMillis: RETRY_CONFIG.idleTimeoutMs,
-      connectionTimeoutMillis: RETRY_CONFIG.connectionTimeoutMs,
-      acquireTimeoutMillis: RETRY_CONFIG.acquireTimeoutMs,
-      maxUses: 5000, // Reset connection after 5000 queries
-      ssl: {
-        rejectUnauthorized: false,
-        checkServerIdentity: () => undefined
-      }
-    });
-
-    // Verify new pool with retries
-    let retries = RETRY_CONFIG.maxRetries;
-    let delay = RETRY_CONFIG.initialDelayMs;
-
-    while (retries > 0) {
+    this.initPromise = (async () => {
       try {
-        const client = await pool.connect();
-        const isValid = await verifyPoolConnection(client);
-        client.release();
-        
-        if (isValid) {
-          console.log("Pool initialization successful");
-          state.connectionErrors = 0;
-          break;
-        }
+        console.log("Initializing connection pool...");
+        await this.createPool();
+        await this.verifyPool();
+        this.startMetricsCollection();
       } catch (error) {
-        retries--;
-        state.connectionErrors++;
-        state.lastError = error instanceof Error ? error : new Error(String(error));
-        
-        if (retries === 0) throw state.lastError;
-        
-        console.warn(`Pool verification failed (${retries} retries left):`, error);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        delay = Math.min(delay * 2, RETRY_CONFIG.maxDelayMs);
-      }
-    }
-
-    // Setup pool event handlers
-    pool.on('error', (err: Error) => {
-      console.error('Pool error:', err);
-      state.connectionErrors++;
-      state.lastError = err;
-      
-      if (!state.isInitializing) {
-        pool = null;
-        db = null;
-      }
-    });
-
-    pool.on('connect', (client: PoolClient) => {
-      console.log('New database connection established');
-      client.on('error', (err: Error) => {
-        console.error('Client connection error:', err);
-        state.connectionErrors++;
-        state.lastError = err;
-      });
-    });
-
-    return pool;
-  } catch (error) {
-    console.error('Pool initialization failed:', error);
-    pool = null;
-    throw error;
-  } finally {
-    state.isInitializing = false;
-  }
-}
-
-// Get pool stats with connection state
-export const getPoolStatus = async () => {
-  if (!pool) return { 
-    status: 'not_initialized',
-    connectionState: {
-      errors: state.connectionErrors,
-      lastError: state.lastError?.message,
-      lastInitAttempt: new Date(state.lastInitAttempt).toISOString()
-    }
-  };
-  
-  return {
-    totalConnections: pool.totalCount,
-    idleConnections: pool.idleCount,
-    waitingRequests: pool.waitingCount,
-    status: 'active',
-    connectionState: {
-      errors: state.connectionErrors,
-      lastError: state.lastError?.message,
-      lastInitAttempt: new Date(state.lastInitAttempt).toISOString()
-    }
-  };
-};
-
-// Graceful cleanup with improved error handling
-export const cleanup = async () => {
-  stopHealthCheck();
-  if (pool) {
-    try {
-      await pool.end();
-      console.log("Database connections closed successfully");
-    } catch (error) {
-      if (error instanceof Error && error.message !== 'Called end on pool more than once') {
-        console.error("Error closing database connections:", error);
+        console.error("Pool initialization failed:", error);
+        this.pool = null;
+        this.initPromise = null;
         throw error;
       }
-    } finally {
-      pool = null;
-      db = null;
+    })();
+
+    return this.initPromise;
+  }
+
+  private async createPool() {
+    this.pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: this.currentSize,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: POOL_CONFIG.connectionTimeout,
+      maxUses: 7500,
+      ssl: true
+    });
+  }
+
+  private async verifyPool() {
+    if (!this.pool) throw new Error("Pool not initialized");
+
+    const verifyPromise = (async () => {
+      const client = await this.pool!.connect();
+      try {
+        await client.query('SELECT 1');
+      } finally {
+        client.release();
+      }
+    })();
+
+    try {
+      await Promise.race([
+        verifyPromise,
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Connection timeout')), POOL_CONFIG.connectionTimeout)
+        )
+      ]);
+    } catch (error) {
+      await this.pool.end();
+      throw error;
     }
+  }
+
+  private startMetricsCollection() {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+    }
+
+    this.healthCheckTimer = setInterval(() => {
+      this.collectMetrics().catch(error => {
+        console.error("Metrics collection failed:", error);
+      });
+    }, POOL_CONFIG.healthCheckInterval);
+  }
+
+  private async collectMetrics() {
+    if (!this.pool) return;
+
+    const startTime = Date.now();
+    try {
+      const client = await this.pool.connect();
+      const responseTime = Date.now() - startTime;
+      client.release();
+
+      const metric: PoolMetrics = {
+        timestamp: Date.now(),
+        totalConnections: this.pool.totalCount,
+        activeConnections: this.pool.totalCount - this.pool.idleCount,
+        idleConnections: this.pool.idleCount,
+        waitingRequests: this.pool.waitingCount,
+        responseTime,
+        errors: 0
+      };
+
+      this.metrics.push(metric);
+      this.pruneMetrics();
+      await this.evaluateScaling();
+    } catch (error) {
+      console.error('Error collecting metrics:', error);
+      this.metrics.push({
+        timestamp: Date.now(),
+        totalConnections: this.pool?.totalCount || 0,
+        activeConnections: 0,
+        idleConnections: 0,
+        waitingRequests: 0,
+        responseTime: 0,
+        errors: 1
+      });
+    }
+  }
+
+  private async evaluateScaling() {
+    if (
+      this.isScaling || 
+      !this.pool || 
+      Date.now() - this.lastScaling < POOL_CONFIG.cooldownPeriod
+    ) {
+      return;
+    }
+
+    const recentMetrics = this.metrics.slice(-5);
+    if (recentMetrics.length === 0) return;
+
+    const avgUtilization = recentMetrics.reduce((sum, m) => 
+      sum + m.activeConnections / Math.max(m.totalConnections, 1), 0
+    ) / recentMetrics.length;
+
+    try {
+      this.isScaling = true;
+      
+      if (avgUtilization > POOL_CONFIG.scaleUpThreshold && 
+          this.currentSize < POOL_CONFIG.maxConnections) {
+        await this.scaleUp();
+      } else if (avgUtilization < POOL_CONFIG.scaleDownThreshold && 
+                 this.currentSize > POOL_CONFIG.minConnections) {
+        await this.scaleDown();
+      }
+    } finally {
+      this.isScaling = false;
+    }
+  }
+
+  private async scaleUp() {
+    const newSize = Math.min(
+      this.currentSize + POOL_CONFIG.scaleUpStep, 
+      POOL_CONFIG.maxConnections
+    );
+    await this.resizePool(newSize);
+  }
+
+  private async scaleDown() {
+    const newSize = Math.max(
+      this.currentSize - POOL_CONFIG.scaleDownStep, 
+      POOL_CONFIG.minConnections
+    );
+    await this.resizePool(newSize);
+  }
+
+  private async resizePool(newSize: number) {
+    if (!this.pool) return;
+
+    console.log(`Resizing pool from ${this.currentSize} to ${newSize} connections`);
+
+    try {
+      const oldPool = this.pool;
+      await this.createPool();
+      await this.verifyPool();
+      
+      this.currentSize = newSize;
+      this.lastScaling = Date.now();
+
+      // Gracefully close old pool
+      setTimeout(() => {
+        oldPool.end().catch(console.error);
+      }, 5000);
+    } catch (error) {
+      console.error('Error resizing pool:', error);
+      throw error;
+    }
+  }
+
+  private pruneMetrics() {
+    const cutoff = Date.now() - POOL_CONFIG.metricsWindow;
+    this.metrics = this.metrics.filter(m => m.timestamp > cutoff);
+  }
+
+  async getClient(): Promise<PoolClient> {
+    if (!this.pool) {
+      await this.initialize();
+    }
+    return this.pool!.connect();
+  }
+
+  async query(...args: any[]) {
+    if (!this.pool) {
+      await this.initialize();
+    }
+    return this.pool!.query(...args);
+  }
+
+  async end() {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
+    
+    if (this.pool) {
+      await this.pool.end();
+      this.pool = null;
+    }
+  }
+
+  getMetrics() {
+    return {
+      currentSize: this.currentSize,
+      metrics: this.metrics.slice(-5),
+      lastScaling: this.lastScaling,
+      poolStats: this.pool ? {
+        totalCount: this.pool.totalCount,
+        idleCount: this.pool.idleCount,
+        waitingCount: this.pool.waitingCount
+      } : null
+    };
+  }
+}
+
+const poolManager = new PoolManager();
+let db: ReturnType<typeof drizzle> | null = null;
+
+export async function getDb() {
+  if (!db) {
+    await poolManager.initialize();
+    const client = await poolManager.getClient();
+    db = drizzle(client, { schema });
+  }
+
+  try {
+    const timeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Database operation timeout')), 
+      POOL_CONFIG.connectionTimeout)
+    );
+    
+    const query = db.select({ value: sql`1` }).execute();
+    await Promise.race([query, timeout]);
+    
+    return db;
+  } catch (error) {
+    console.warn("Database connection invalid, reinitializing...");
+    await poolManager.initialize();
+    const client = await poolManager.getClient();
+    db = drizzle(client, { schema });
+    return db;
+  }
+}
+
+export const getPoolStatus = async () => {
+  const metrics = poolManager.getMetrics();
+  
+  return {
+    status: 'connected',
+    poolStats: {
+      currentSize: metrics.currentSize,
+      recentMetrics: metrics.metrics,
+      lastScalingOperation: new Date(metrics.lastScaling).toISOString(),
+      currentPoolStats: metrics.poolStats
+    }
+  };
+};
+
+export const pool = {
+  connect: async () => poolManager.getClient(),
+  query: async (...args: any[]) => poolManager.query(...args),
+  end: async () => {
+    await poolManager.end();
+    db = null;
   }
 };
 
-// Enhanced connection validation function
-async function validateConnection(db: ReturnType<typeof drizzle>): Promise<boolean> {
+export const checkConnection = async () => {
   try {
-    await db.select({ value: sql`1` }).execute();
+    const database = await getDb();
+    
+    const timeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Connection check timeout')), 
+      POOL_CONFIG.connectionTimeout)
+    );
+    
+    const query = database.select({ value: sql`1` }).execute();
+    await Promise.race([query, timeout]);
+    
     return true;
   } catch (error) {
-    console.error("Database connection validation failed:", error);
-    return false;
-  }
-}
-
-// Enhanced lazy-loaded database instance getter with improved validation
-let connectionRetryCount = 0;
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000;
-
-async function getDrizzle() {
-  if (db) {
-    try {
-      // Verify existing connection
-      const isValid = await validateConnection(db);
-      if (isValid) {
-        return db;
-      }
-      console.warn("Existing connection invalid, reinitializing...");
-      db = null;
-    } catch (error) {
-      console.warn("Connection verification failed:", error);
-      db = null;
-    }
-  }
-
-  while (connectionRetryCount < MAX_RETRIES) {
-    try {
-      const poolInstance = await initializePool();
-      if (!poolInstance) {
-        throw new Error("Failed to initialize database pool");
-      }
-
-      db = drizzle(poolInstance, { schema });
-      const isValid = await validateConnection(db);
-      
-      if (isValid) {
-        console.log("Database connection established successfully");
-        connectionRetryCount = 0; // Reset counter on success
-        return db;
-      }
-      
-      throw new Error("Connection validation failed");
-    } catch (error) {
-      connectionRetryCount++;
-      console.error(`Database connection attempt ${connectionRetryCount} failed:`, error);
-      
-      if (connectionRetryCount < MAX_RETRIES) {
-        console.log(`Retrying in ${RETRY_DELAY}ms...`);
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-        continue;
-      }
-      
-      throw new Error(`Failed to establish database connection after ${MAX_RETRIES} attempts`);
-    }
-  }
-
-  throw new Error("Failed to initialize database connection");
-}
-
-// Export enhanced getDb function with retry mechanism
-export const getDb = async () => {
-  try {
-    return await getDrizzle();
-  } catch (error) {
-    console.error("Error getting database instance:", error);
+    console.error("Database connection check failed:", error);
     throw error;
   }
 };
 
-// Health check implementation
 let healthCheckInterval: NodeJS.Timeout | null = null;
 
 export const startHealthCheck = () => {
   if (healthCheckInterval) {
     clearInterval(healthCheckInterval);
   }
-  
+
   healthCheckInterval = setInterval(async () => {
     try {
-      if (pool) {
-        const client = await pool.connect();
-        const isValid = await verifyPoolConnection(client);
-        client.release();
-        
-        if (!isValid) {
-          console.warn("Health check failed, resetting pool...");
-          pool = null;
-          db = null;
-        }
-      }
+      await checkConnection();
     } catch (error) {
-      console.error("Health check error:", error);
-      pool = null;
-      db = null;
+      console.error("Health check failed:", error);
     }
-  }, RETRY_CONFIG.healthCheckIntervalMs);
+  }, POOL_CONFIG.healthCheckInterval);
+
+  console.log(`Health check started with ${POOL_CONFIG.healthCheckInterval}ms interval`);
 };
 
 export const stopHealthCheck = () => {
   if (healthCheckInterval) {
     clearInterval(healthCheckInterval);
     healthCheckInterval = null;
+    console.log("Health check stopped");
   }
 };
-
-// Export pool for session store
-export { pool };

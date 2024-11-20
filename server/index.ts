@@ -220,6 +220,9 @@ async function startServer() {
       throw new Error("Database initialization failed on Replit");
     }
 
+    // Start health check immediately after database initialization
+    startHealthCheck();
+
     // Initialize session after database is ready
     if (!await initializeSession()) {
       throw new Error("Session initialization failed on Replit");
@@ -294,21 +297,6 @@ async function startServer() {
     throw error;
   }
 }
-
-// Start the server with Replit-optimized error handling
-console.log("Initiating server startup sequence on Replit...");
-let startupComplete = false;
-
-startServer()
-  .then(() => {
-    console.log("Server started successfully on Replit");
-    startupComplete = true;
-    startHealthCheck();
-  })
-  .catch((error) => {
-    console.error("Server failed to start on Replit:", error);
-    process.exit(1);
-  });
 
 // Enhanced cleanup handlers
 async function cleanup() {
