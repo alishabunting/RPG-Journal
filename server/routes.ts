@@ -2,16 +2,159 @@ import type { Express } from "express";
 import passport from "passport";
 import { getDb, pool, getPoolStatus } from "../db/index.js";
 import { users, journals, quests } from "../db/schema.js";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import { analyzeEntry, generateQuests, calculateQuestCompletion } from "./openai.js";
 import { ensureAuthenticated } from "./auth.js";
-import type { User, Journal, Quest } from "../db/schema.js";
-import { PoolClient } from "@neondatabase/serverless";
+import type { User, Journal } from "../db/schema.js";
 import { drizzle } from "drizzle-orm/neon-serverless";
-import { sql } from "drizzle-orm";
+import type { PoolClient } from "@neondatabase/serverless";
 
 // Enhanced character progress update with validation and error handling
-async function updateCharacterProgress(userId: number, analysis: any, client?: PoolClient) {
+// Helper functions for advanced RPG progression
+
+interface StatWeights {
+  strength: number;
+  dexterity: number;
+  constitution: number;
+  intelligence: number;
+  wisdom: number;
+  charisma: number;
+  [key: string]: number; // Allow indexing with strings
+}
+
+// XP scaling configuration
+const XP_CONFIG = {
+  BASE_XP: 50,
+  LEVEL_SCALING: 0.1, // 10% increase per level
+  DIFFICULTY_SCALING: 0.2, // 20% increase per difficulty level
+  STAT_BONUS_SCALING: 0.05, // 5% stat bonus per level
+  MAX_STAT_VALUE: 20,
+  MIN_STAT_VALUE: 1
+};
+
+// AI analysis categories to RPG stats mapping
+const STAT_KEYWORDS = {
+  strength: ['exercise', 'physical', 'strength', 'power', 'lifting', 'sports'],
+  dexterity: ['agility', 'balance', 'coordination', 'reflex', 'speed', 'craft'],
+  constitution: ['health', 'endurance', 'stamina', 'wellness', 'resilience'],
+  intelligence: ['study', 'learn', 'research', 'analysis', 'problem-solving'],
+  wisdom: ['reflection', 'meditation', 'insight', 'awareness', 'mindfulness'],
+  charisma: ['social', 'leadership', 'communication', 'persuasion', 'empathy']
+};
+
+interface QuestRewards {
+  xpGained: number;
+  statUpdates: Record<string, number>;
+  achievements: string[];
+}
+
+interface Analysis {
+  mood?: string;
+  tags?: string[];
+  content?: string;
+  growthAreas?: string[];
+  characterProgression?: {
+    insights?: string[];
+    skillsImproved?: string[];
+  };
+  statChanges?: Record<string, number>;
+}
+
+interface Character {
+  name: string;
+  class: string;
+  level: number;
+  xp: number;
+  stats: StatWeights;
+  achievements: Array<{
+    title: string;
+    description?: string;
+    timestamp: string;
+  }>;
+}
+
+interface Quest {
+  id: number;
+  title: string;
+  description: string;
+  difficulty: number;
+  category: string;
+  status: 'active' | 'completed';
+  userId: number;
+  createdAt?: Date;
+  completedAt?: Date | null;
+}
+
+// Already defined above, removing duplicate interface
+
+function calculateStatWeights(analysis: Analysis, level: number): StatWeights {
+  const baseWeights: StatWeights = {
+    strength: 1,
+    dexterity: 1,
+    constitution: 1,
+    intelligence: 1,
+    wisdom: 1,
+    charisma: 1
+  };
+
+  // Analyze content sentiment and context
+  const sentiment = analysis.mood || 'neutral';
+  const content = analysis.content?.toLowerCase() || '';
+  const tags = analysis.tags || [];
+
+  // Calculate stat weights based on content analysis
+  Object.entries(STAT_KEYWORDS).forEach(([stat, keywords]) => {
+    const statMatches = keywords.filter(keyword => 
+      content.includes(keyword) || 
+      tags.some(tag => tag.toLowerCase().includes(keyword))
+    ).length;
+    
+    if (statMatches > 0) {
+      baseWeights[stat as keyof StatWeights] *= (1 + (statMatches * 0.1));
+    }
+  });
+
+  // Adjust weights based on sentiment and character progression
+  if (sentiment === 'positive') {
+    baseWeights.charisma *= 1.1;
+    baseWeights.wisdom *= 1.1;
+  } else if (sentiment === 'negative') {
+    baseWeights.constitution *= 1.1;
+    baseWeights.wisdom *= 1.05;
+  }
+
+  // AI-driven insight bonuses
+  if (analysis.characterProgression?.insights?.length) {
+    baseWeights.intelligence *= 1.1;
+    baseWeights.wisdom *= 1.1;
+  }
+
+  // Scale weights with level for more significant growth at higher levels
+  Object.keys(baseWeights).forEach(key => {
+    baseWeights[key] *= (1 + (level * 0.02));
+  });
+
+  return baseWeights;
+}
+
+function calculateConsistencyBonus(character: Character): number {
+  const now = new Date();
+  const recentAchievements = (character.achievements || [])
+    .filter(achievement => {
+      const achievementDate = new Date(achievement.timestamp);
+      const daysDiff = (now.getTime() - achievementDate.getTime()) / (1000 * 60 * 60 * 24);
+      return daysDiff <= 7; // Consider achievements within the last week
+    });
+
+  // Bonus scales with number of recent achievements
+  return recentAchievements.length * 5;
+}
+
+async function updateCharacterProgress(
+  userId: number, 
+  analysis: Analysis, 
+  client?: PoolClient
+): Promise<Character> {
   const db = client ? drizzle(client, { schema: { users, journals, quests } }) : await getDb();
   
   try {
@@ -23,32 +166,44 @@ async function updateCharacterProgress(userId: number, analysis: any, client?: P
 
     const character = user.character as any;
     const stats = character.stats || {
-      wellness: 1,
-      social: 1,
-      growth: 1,
-      achievement: 1
+      strength: XP_CONFIG.MIN_STAT_VALUE,
+      dexterity: XP_CONFIG.MIN_STAT_VALUE,
+      constitution: XP_CONFIG.MIN_STAT_VALUE,
+      intelligence: XP_CONFIG.MIN_STAT_VALUE,
+      wisdom: XP_CONFIG.MIN_STAT_VALUE,
+      charisma: XP_CONFIG.MIN_STAT_VALUE
     };
 
-    // Validate and update stats with bounds checking
+    // Dynamic XP scaling based on character level and progression
+    const level = character.level || 1;
+    const levelScaling = Math.pow(1 + XP_CONFIG.LEVEL_SCALING, level - 1); // Exponential scaling
+    const baseXP = Math.round(XP_CONFIG.BASE_XP * levelScaling);
+
+    // AI-driven stat growth with dynamic weights
+    const statWeights = calculateStatWeights(analysis, level);
     Object.entries(analysis.statChanges || {}).forEach(([stat, change]) => {
       if (stats[stat] !== undefined) {
         const numericChange = Number(change);
         if (!isNaN(numericChange)) {
-          const boundedChange = Math.max(-1, Math.min(1, numericChange));
+          // Apply weighted stat changes based on analysis and level
+          const weightedChange = numericChange * statWeights[stat];
+          // Bound the change between -1 and 1, scaled by level
+          const boundedChange = Math.max(-1, Math.min(1, weightedChange)) * (1 + (level * 0.05));
           stats[stat] = Math.max(1, Math.min(10, stats[stat] + boundedChange));
         }
       }
     });
 
-    // Calculate XP gain with weighted bonuses
-    const baseXP = 50;
-    const growthBonus = (analysis.growthAreas?.length || 0) * 10;
-    const insightBonus = (analysis.characterProgression?.insights?.length || 0) * 5;
-    const skillBonus = (analysis.characterProgression?.skillsImproved?.length || 0) * 8;
+    // Enhanced XP calculation with dynamic bonuses
+    const growthBonus = (analysis.growthAreas?.length || 0) * (10 * levelScaling);
+    const insightBonus = (analysis.characterProgression?.insights?.length || 0) * (5 * levelScaling);
+    const skillBonus = (analysis.characterProgression?.skillsImproved?.length || 0) * (8 * levelScaling);
+    const consistencyBonus = calculateConsistencyBonus(character);
     
-    const xpGain = baseXP + growthBonus + insightBonus + skillBonus;
+    const xpGain = Math.round(baseXP + growthBonus + insightBonus + skillBonus + consistencyBonus);
     const newXp = (character.xp || 0) + xpGain;
-    const newLevel = Math.floor(newXp / 1000) + 1;
+    // Dynamic level scaling: requires more XP per level as you progress
+    const newLevel = Math.floor(Math.pow(newXp / 1000, 0.8)) + 1;
 
     // Update character with new stats and progression
     const updatedCharacter = {
@@ -107,7 +262,7 @@ export function registerRoutes(app: Express) {
     try {
       const poolStats = await getPoolStatus();
       const db = await getDb(); // This will trigger lazy loading
-      await db.select({ value: sql`1` }).execute(); // Verify connection
+      await db.select({ value: sql`1` }).then(result => result[0]); // Verify connection
       
       res.json({
         status: 'connected',
@@ -213,7 +368,7 @@ export function registerRoutes(app: Express) {
       }).returning();
 
       let updatedCharacter = null;
-      let quests = [];
+      let quests: Quest[] = [];
       
       // Try to update character progression and generate quests
       try {
@@ -300,15 +455,42 @@ export function registerRoutes(app: Express) {
 
       const character = user.character as any;
       
-      // Calculate rewards using OpenAI with retry
+      // Calculate rewards using OpenAI with retry and dynamic scaling
       let rewards;
       try {
+        // Fetch quest details first
+        const quest = await db.query.quests.findFirst({
+          where: and(
+            eq(quests.id, questId),
+            eq(quests.userId, userId)
+          ),
+        });
+
+        if (!quest) {
+          throw new Error("Quest not found");
+        }
+
+        const questDifficulty = quest.difficulty || 1;
+        const levelScaling = 1 + (character.level * XP_CONFIG.LEVEL_SCALING);
         rewards = await calculateQuestCompletion(questId, character.stats);
+        
+        // Apply dynamic scaling to rewards with bounded multipliers
+        const difficultyMultiplier = Math.max(1, Math.min(3, questDifficulty * XP_CONFIG.DIFFICULTY_SCALING));
+        rewards.xpGained = Math.round(rewards.xpGained * levelScaling * difficultyMultiplier);
+        
+        // Scale stat updates based on character level and quest difficulty with caps
+        Object.entries(rewards.statUpdates).forEach(([stat, value]) => {
+          const statBonus = value * (1 + (character.level * XP_CONFIG.STAT_BONUS_SCALING));
+          const boundedValue = Math.max(-1, Math.min(1, statBonus * difficultyMultiplier));
+          rewards.statUpdates[stat] = boundedValue;
+        });
+        
       } catch (error) {
         console.error('Error calculating rewards:', error);
-        // Provide fallback rewards
+        // Provide scaled fallback rewards
+        const baseXP = 50 * (1 + (character.level * 0.1));
         rewards = {
-          xpGained: 50,
+          xpGained: Math.round(baseXP),
           statUpdates: {},
           achievements: []
         };

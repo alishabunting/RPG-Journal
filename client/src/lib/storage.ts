@@ -14,10 +14,12 @@ const DEFAULT_CHARACTER = {
   level: 1,
   xp: 0,
   stats: {
-    wellness: 1,
-    social: 1,
-    growth: 1,
-    achievement: 1
+    strength: 1,
+    dexterity: 1,
+    constitution: 1,
+    intelligence: 1,
+    wisdom: 1,
+    charisma: 1
   },
   achievements: []
 };
@@ -60,10 +62,12 @@ export type Character = {
   level: number;
   xp: number;
   stats: {
-    wellness: number;
-    social: number;
-    growth: number;
-    achievement: number;
+    strength: number;
+    dexterity: number;
+    constitution: number;
+    intelligence: number;
+    wisdom: number;
+    charisma: number;
   };
   achievements: Array<{
     title: string;

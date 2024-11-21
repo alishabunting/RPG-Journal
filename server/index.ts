@@ -10,8 +10,8 @@ import "./auth.js";
 import { db, checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db/index.js";
 
 // Enhanced port configuration for Replit with external port mapping
-const PORT = Number(process.env.PORT) || 3000;
-const EXTERNAL_PORT = Number(process.env.EXTERNAL_PORT) || 3001;
+const PORT = Number(process.env.PORT) || 5000;
+const EXTERNAL_PORT = Number(process.env.EXTERNAL_PORT) || 80;
 const HOST = process.env.REPL_SLUG ? '0.0.0.0' : 'localhost';
 const isReplit = !!process.env.REPL_SLUG;
 const isDev = process.env.NODE_ENV !== "production";
