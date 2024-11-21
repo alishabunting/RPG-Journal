@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,24 +15,19 @@ import {
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { useToast } from "../hooks/use-toast";
-import useSWR from "swr";
+import { storage } from "../lib/storage";
 
 const authSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters").max(20, "Username must be less than 20 characters"),
+  username: z
+    .string()
+    .min(3, "Username must be at least 3 characters")
+    .max(20, "Username must be less than 20 characters"),
 });
 
 export default function Auth() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
-  const { data: user, error } = useSWR('/api/auth/me');
-
-  // Redirect if already authenticated
-  useEffect(() => {
-    if (user && !error) {
-      setLocation("/");
-    }
-  }, [user, error, setLocation]);
 
   const form = useForm<z.infer<typeof authSchema>>({
     resolver: zodResolver(authSchema),
@@ -41,49 +36,30 @@ export default function Auth() {
     },
   });
 
-  const handleAuthError = (error: any) => {
-    let title = "Authentication Error";
-    let description = "An unexpected error occurred. Please try again.";
-
-    if (error.message === "Username already taken") {
-      title = "Username Unavailable";
-      description = "This username is already taken. Please choose another one.";
-    } else if (error.message.includes("Network")) {
-      title = "Connection Error";
-      description = "Please check your internet connection and try again.";
-    }
-
-    toast({
-      title,
-      description,
-      variant: "destructive",
-    });
-  };
-
   async function onSubmit(values: z.infer<typeof authSchema>) {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...values, none: "none" }), // Add dummy password field
-      });
-
-      if (res.ok) {
+      const user = storage.setUser(values.username);
+      if (user) {
+        // Initialize default quests
+        storage.addQuest({
+          title: "Begin Your Journey",
+          description: "Write your first journal entry to start your adventure",
+          category: "Personal"
+        });
         setLocation("/");
       } else {
-        const data = await res.json();
-        throw new Error(data.message || "Authentication failed");
+        throw new Error("Failed to create user");
       }
     } catch (error) {
-      handleAuthError(error);
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
-  }
-
-  if (user && !error) {
-    return null; // Don't render anything while redirecting
   }
 
   return (
@@ -104,7 +80,11 @@ export default function Auth() {
                   <FormItem>
                     <FormLabel className="text-white">Choose Your Username</FormLabel>
                     <FormControl>
-                      <Input {...field} className="border-purple-500" placeholder="Enter username to start" />
+                      <Input
+                        {...field}
+                        className="border-purple-500"
+                        placeholder="Enter username to start"
+                      />
                     </FormControl>
                     <FormMessage className="text-red-400" />
                   </FormItem>

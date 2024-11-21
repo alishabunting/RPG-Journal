@@ -23,6 +23,10 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+localPort = 5173
+externalPort = 5173
+
+[[ports]]
 localPort = 24678
 externalPort = 3000
 
@@ -49,14 +53,10 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "RPG Journal App"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "DB Push"
+args = "React App"
 
 [[workflows.workflow]]
-name = "RPG Journal App"
+name = "React App"
 author = "agent"
 
 [workflows.workflow.metadata]
@@ -67,19 +67,5 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "NODE_ENV=development PORT=3000 tsx watch --clear-screen=false server/index.ts"
-waitForPort = 3000
-
-[[workflows.workflow]]
-name = "DB Push"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run db:push"
+args = "cd client && npm run dev -- --host 0.0.0.0"
+waitForPort = 5173

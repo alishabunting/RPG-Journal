@@ -1,28 +1,21 @@
-import useSWR from "swr";
+import { useState } from "react";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "./ui/card";
-import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { Checkbox } from "./ui/checkbox";
-
-type Quest = {
-  id: number;
-  title: string;
-  description: string;
-  category: string;
-  status: string;
-};
+import { storage } from "../lib/storage";
+import type { Quest } from "../lib/storage";
 
 export function QuestLog() {
-  const { data: quests, mutate } = useSWR<Quest[]>("/api/quests");
+  const [quests, setQuests] = useState<Quest[]>(() => storage.getQuests());
 
-  const completeQuest = async (questId: number) => {
-    await fetch(`/api/quests/${questId}/complete`, { method: "POST" });
-    mutate();
+  const completeQuest = async (questId: string) => {
+    storage.completeQuest(questId);
+    setQuests(storage.getQuests());
   };
 
   const categoryColors = {

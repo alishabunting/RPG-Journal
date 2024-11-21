@@ -1,5 +1,4 @@
 import { useState } from "react";
-import useSWR, { mutate } from "swr";
 import {
   Card,
   CardContent,
@@ -11,10 +10,11 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { useToast } from "../hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { storage } from "../lib/storage";
 
 export function Journal() {
   const [entry, setEntry] = useState("");
-  const { data: journals } = useSWR("/api/journals");
+  const [journals, setJournals] = useState(() => storage.getJournals());
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -30,17 +30,9 @@ export function Journal() {
     
     setIsSubmitting(true);
     try {
-      const res = await fetch("/api/journals", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: entry }),
-      });
-      
-      if (!res.ok) throw new Error("Failed to save journal");
-      
+      const newJournal = storage.addJournal(entry);
+      setJournals([newJournal, ...journals]);
       setEntry("");
-      await mutate("/api/journals");
-      await mutate("/api/quests"); // Refresh quests after new entry
       
       toast({
         title: "Journal Entry Saved",
@@ -91,7 +83,7 @@ export function Journal() {
       </Card>
 
       <div className="space-y-4">
-        {journals?.map((journal: any) => (
+        {journals.map((journal) => (
           <Card key={journal.id} className="bg-black/30">
             <CardHeader>
               <CardTitle className="text-sm text-purple-400">

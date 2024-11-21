@@ -1,21 +1,25 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import useSWR from "swr";
 import { Character } from "../components/Character";
 import { Journal } from "../components/Journal";
 import { QuestLog } from "../components/QuestLog";
 import { Stats } from "../components/Stats";
 import { Card } from "../components/ui/card";
+import { storage } from "../lib/storage";
+import type { User } from "../lib/storage";
 
 export default function Home() {
   const [, setLocation] = useLocation();
-  const { data: user, error } = useSWR('/api/auth/me');
+  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    if (error) {
+    const currentUser = storage.getUser();
+    if (!currentUser) {
       setLocation('/auth');
+    } else {
+      setUser(currentUser);
     }
-  }, [error, setLocation]);
+  }, [setLocation]);
 
   if (!user) return null;
 
