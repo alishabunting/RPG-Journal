@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useState } from "react";
 import {
   Card,
@@ -5,6 +6,8 @@ import {
   CardHeader,
   CardTitle,
 } from "./ui/card";
+import { storage } from "../lib/storage";
+import type { Character as CharacterType } from "../lib/storage";
 import { Avatar, AvatarImage } from "./ui/avatar";
 import { Progress } from "./ui/progress";
 import {
@@ -18,26 +21,57 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
-const CLASSES = ["Warrior", "Mage", "Rogue", "Cleric"];
+const CLASSES = ["Warrior", "Mage", "Rogue", "Cleric"] as const;
 const AVATARS = [
   "/avatars/warrior.svg",
   "/avatars/mage.svg",
   "/avatars/rogue.svg",
   "/avatars/cleric.svg",
-];
+] as const;
 
-export function Character({ user }: { user: any }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [character, setCharacter] = useState(user.character);
+const defaultCharacter: CharacterType = {
+  name: 'New Adventurer',
+  class: 'Warrior',
+  avatar: '/avatars/warrior.svg',
+  level: 1,
+  xp: 0,
+  stats: {
+    wellness: 1,
+    social: 1,
+    growth: 1,
+    achievement: 1
+  },
+  achievements: []
+};
 
-  const handleSave = async () => {
-    await fetch("/api/character", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(character),
-    });
-    setIsEditing(false);
+interface CharacterProps {
+  user?: {
+    character?: CharacterType;
   };
+}
+
+export function Character({ user }: CharacterProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [character, setCharacter] = useState<CharacterType>(() => {
+    const initialCharacter = user?.character ? { ...defaultCharacter, ...user.character } : { ...defaultCharacter };
+    return initialCharacter;
+  });
+
+  const handleSave = () => {
+    try {
+      storage.updateCharacter(character);
+      setIsEditing(false);
+    } catch (error) {
+      console.error('Error saving character:', error);
+    }
+  };
+
+  React.useEffect(() => {
+    if (user?.character) {
+      const updatedCharacter = { ...defaultCharacter, ...user.character };
+      setCharacter(updatedCharacter);
+    }
+  }, [user?.character]);
 
   return (
     <div className="p-6">
@@ -48,9 +82,9 @@ export function Character({ user }: { user: any }) {
               <AvatarImage src={character.avatar} />
             </Avatar>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="bg-black/90 border-purple-500">
             <DialogHeader>
-              <DialogTitle>Customize Character</DialogTitle>
+              <DialogTitle className="text-white">Customize Character</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <Input
@@ -59,6 +93,7 @@ export function Character({ user }: { user: any }) {
                 onChange={(e) =>
                   setCharacter({ ...character, name: e.target.value })
                 }
+                className="bg-purple-900/50 border-purple-500 text-white placeholder:text-purple-300"
               />
               <Select
                 value={character.class}
@@ -66,12 +101,16 @@ export function Character({ user }: { user: any }) {
                   setCharacter({ ...character, class: value })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger className="bg-purple-900/50 border-purple-500 text-white">
                   <SelectValue placeholder="Select Class" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="bg-black/90 border-purple-500">
                   {CLASSES.map((c) => (
-                    <SelectItem key={c} value={c}>
+                    <SelectItem 
+                      key={c} 
+                      value={c}
+                      className="text-white hover:bg-purple-900/50 focus:bg-purple-900/50"
+                    >
                       {c}
                     </SelectItem>
                   ))}
@@ -81,36 +120,67 @@ export function Character({ user }: { user: any }) {
                 {AVATARS.map((avatar) => (
                   <Avatar
                     key={avatar}
-                    className="w-20 h-20 cursor-pointer"
+                    className="w-20 h-20 cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all"
                     onClick={() => setCharacter({ ...character, avatar })}
                   >
                     <AvatarImage src={avatar} />
                   </Avatar>
                 ))}
               </div>
-              <Button onClick={handleSave}>Save Changes</Button>
+              <Button 
+                onClick={handleSave}
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white"
+              >
+                Save Changes
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
 
-        <div>
+        <div className="space-y-2">
           <h2 className="text-2xl font-bold">{character.name}</h2>
-          <p className="text-purple-400">Level 1 {character.class}</p>
+          <p className="text-purple-400">Level {character.level} {character.class}</p>
+          <div className="w-full">
+            <div className="flex justify-between text-xs">
+              <span>XP</span>
+              <span>{character.xp}/1000</span>
+            </div>
+            <Progress value={(character.xp % 1000) / 10} className="h-1" />
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 mt-6">
-        {Object.entries(character.stats).map(([stat, value]) => (
-          <Card key={stat}>
-            <CardHeader>
-              <CardTitle className="capitalize text-sm">{stat}</CardTitle>
+        {Object.entries(character?.stats ?? {}).map(([stat, value]) => (
+          <Card key={stat} className="bg-black/30 border-purple-500/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="capitalize text-sm flex justify-between items-center">
+                <span>{stat}</span>
+                <span className="text-xs text-purple-400">{value}/10</span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <Progress value={value as number * 10} className="h-2" />
+              <Progress value={(value as number) * 10} className="h-2" />
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {character?.achievements?.length > 0 && (
+        <div className="mt-6">
+          <h3 className="text-lg font-semibold mb-3">Recent Achievements</h3>
+          <div className="space-y-2">
+            {character?.achievements?.slice(0, 3).map((achievement, index) => (
+              <div key={index} className="bg-purple-500/10 rounded-lg p-3">
+                <h4 className="font-medium text-purple-300">{achievement?.title}</h4>
+                {achievement?.description && (
+                  <p className="text-sm text-purple-200/70">{achievement.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

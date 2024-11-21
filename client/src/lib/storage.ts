@@ -11,12 +11,39 @@ const DEFAULT_CHARACTER = {
   name: 'Adventurer',
   class: 'Warrior',
   avatar: '/avatars/warrior.svg',
+  level: 1,
+  xp: 0,
   stats: {
-    strength: 5,
-    intelligence: 5,
-    dexterity: 5,
-    charisma: 5
-  }
+    wellness: 1,
+    social: 1,
+    growth: 1,
+    achievement: 1
+  },
+  achievements: []
+};
+
+// Quest categories and templates
+const QUEST_TEMPLATES = {
+  wellness: [
+    { title: "Morning Exercise", description: "Complete a morning workout routine", difficulty: 2 },
+    { title: "Healthy Meal", description: "Prepare a balanced, nutritious meal", difficulty: 1 },
+    { title: "Meditation", description: "Practice mindfulness for 10 minutes", difficulty: 1 }
+  ],
+  social: [
+    { title: "Social Connection", description: "Reach out to a friend or family member", difficulty: 1 },
+    { title: "Group Activity", description: "Participate in a group activity or event", difficulty: 2 },
+    { title: "Kind Gesture", description: "Perform a random act of kindness", difficulty: 1 }
+  ],
+  growth: [
+    { title: "Skill Development", description: "Learn something new or practice a skill", difficulty: 2 },
+    { title: "Reading Quest", description: "Read a book or article for personal growth", difficulty: 1 },
+    { title: "Creative Expression", description: "Express yourself through art, writing, or music", difficulty: 2 }
+  ],
+  achievement: [
+    { title: "Goal Setting", description: "Set and achieve a personal or professional goal", difficulty: 2 },
+    { title: "Task Completion", description: "Complete an important task or project", difficulty: 2 },
+    { title: "Skill Mastery", description: "Master a specific skill or technique", difficulty: 3 }
+  ]
 };
 
 // Type definitions
@@ -30,12 +57,19 @@ export type Character = {
   name: string;
   class: string;
   avatar: string;
+  level: number;
+  xp: number;
   stats: {
-    strength: number;
-    intelligence: number;
-    dexterity: number;
-    charisma: number;
+    wellness: number;
+    social: number;
+    growth: number;
+    achievement: number;
   };
+  achievements: Array<{
+    title: string;
+    description?: string;
+    timestamp: string;
+  }>;
 };
 
 export type Journal = {
@@ -92,17 +126,45 @@ export const storage = {
     return data ? JSON.parse(data) : [];
   },
 
-  addJournal: (content: string): Journal => {
+  addJournal: (content: string): { journal: Journal; quests: Quest[] } => {
     const journals = storage.getJournals();
+    const analysis = analyzeContent(content);
+    
     const newJournal: Journal = {
       id: generateId(),
       content,
       createdAt: new Date().toISOString(),
-      tags: generateTags(content)
+      tags: analysis.tags,
+      mood: analysis.mood
     };
+    
+    // Update character stats based on analysis
+    const user = storage.getUser();
+    if (user) {
+      const character = user.character;
+      Object.entries(analysis.statChanges).forEach(([stat, change]) => {
+        if (character.stats[stat] !== undefined) {
+          character.stats[stat] = Math.min(10, character.stats[stat] + change);
+        }
+      });
+      
+      // Update XP and level
+      character.xp += 50; // Base XP for journal entry
+      character.level = Math.floor(character.xp / 1000) + 1;
+      
+      storage.updateCharacter(character);
+    }
+    
+    // Generate and save quests
+    const newQuests = generateQuestsFromAnalysis(analysis);
+    const quests = storage.getQuests();
+    quests.push(...newQuests);
+    
     journals.unshift(newJournal);
     localStorage.setItem(STORAGE_KEYS.JOURNALS, JSON.stringify(journals));
-    return newJournal;
+    localStorage.setItem(STORAGE_KEYS.QUESTS, JSON.stringify(quests));
+    
+    return { journal: newJournal, quests: newQuests };
   },
 
   // Quest methods
@@ -132,8 +194,69 @@ export const storage = {
   }
 };
 
-// Helper function to generate tags from content (simplified version)
+// Helper functions for local processing
 function generateTags(content: string): string[] {
-  const commonTerms = ['goal', 'achievement', 'challenge', 'progress', 'milestone'];
+  const commonTerms = ['goal', 'achievement', 'challenge', 'progress', 'milestone', 
+    'wellness', 'health', 'social', 'growth', 'learning', 'success'];
   return commonTerms.filter(term => content.toLowerCase().includes(term));
+}
+
+function analyzeContent(content: string): {
+  mood: string;
+  tags: string[];
+  statChanges: Record<string, number>;
+} {
+  const text = content.toLowerCase();
+  const tags = generateTags(content);
+  
+  // Simple sentiment analysis
+  const positiveWords = ['happy', 'great', 'awesome', 'good', 'excellent', 'proud', 'achieved'];
+  const negativeWords = ['sad', 'bad', 'difficult', 'hard', 'frustrated', 'worried', 'failed'];
+  
+  const positiveCount = positiveWords.filter(word => text.includes(word)).length;
+  const negativeCount = negativeWords.filter(word => text.includes(word)).length;
+  
+  const mood = positiveCount > negativeCount ? 'positive' : 
+               negativeCount > positiveCount ? 'negative' : 'neutral';
+  
+  // Calculate stat changes based on content analysis
+  const statChanges = {
+    wellness: text.includes('health') || text.includes('exercise') || text.includes('sleep') ? 0.2 : 0,
+    social: text.includes('friend') || text.includes('family') || text.includes('people') ? 0.2 : 0,
+    growth: text.includes('learn') || text.includes('read') || text.includes('study') ? 0.2 : 0,
+    achievement: text.includes('complete') || text.includes('finish') || text.includes('accomplish') ? 0.2 : 0
+  };
+  
+  return { mood, tags, statChanges };
+}
+
+function generateQuestsFromAnalysis(analysis: ReturnType<typeof analyzeContent>): Quest[] {
+  const quests: Quest[] = [];
+  const categories = Object.keys(QUEST_TEMPLATES) as Array<keyof typeof QUEST_TEMPLATES>;
+  
+  // Generate 1-3 relevant quests based on the journal content
+  const relevantCategories = categories.filter(category => 
+    analysis.statChanges[category] > 0 || analysis.tags.includes(category)
+  );
+  
+  if (relevantCategories.length === 0) {
+    // If no relevant categories, pick one randomly
+    relevantCategories.push(categories[Math.floor(Math.random() * categories.length)]);
+  }
+  
+  relevantCategories.forEach(category => {
+    const template = QUEST_TEMPLATES[category][
+      Math.floor(Math.random() * QUEST_TEMPLATES[category].length)
+    ];
+    
+    quests.push({
+      id: generateId(),
+      title: template.title,
+      description: template.description,
+      category: category,
+      status: 'active'
+    });
+  });
+  
+  return quests;
 }
