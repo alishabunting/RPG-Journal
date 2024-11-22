@@ -177,12 +177,42 @@ export async function generateQuests(analysis: JournalAnalysis): Promise<Quest[]
         messages: [
           {
             role: "system",
-            content: `You are an RPG Quest Master generating personalized quests based on journal analysis.
-                     Create meaningful, achievable quests that align with character development.
-                     Focus on the character's current emotional state and growth opportunities.
-                     Design quests that encourage personal growth and skill development.
-                     Consider both short-term challenges and long-term character progression.
-                     Return a JSON formatted response.`
+            content: `You are an RPG Quest Master generating personalized quests based on journal analysis and character stats.
+                     Create quests that provide an optimal challenge based on the character's current stats and growth areas.
+                     Core RPG stats and their meanings:
+                     - Strength: Physical power, athletic ability, physical challenges
+                     - Dexterity: Agility, reflexes, coordination, fine motor skills
+                     - Constitution: Health, endurance, vitality, resilience
+                     - Intelligence: Learning, memory, reasoning, problem-solving
+                     - Wisdom: Intuition, perception, judgment, emotional intelligence
+                     - Charisma: Personality, leadership, social skills, influence
+
+                     Quest Generation Rules:
+                     1. Primary stat focus: Each quest should primarily challenge 1-2 core stats
+                     2. Stat requirements: Set minimum stat requirements that are challenging but achievable
+                     3. Growth balance: Mix quests between:
+                        - Comfort zone (using high stats) for confidence building
+                        - Growth areas (improving low stats) for progression
+                        - Hybrid challenges that combine both
+                     4. Scaling difficulty: Adjust based on the gap between required stats and current stats
+                     5. Meaningful rewards: Stat rewards should be proportional to challenge and focused on used stats
+
+                     Return a JSON formatted response with an array of quests, each containing:
+                     {
+                       "title": "Quest title",
+                       "description": "Detailed quest description",
+                       "primaryStats": ["stat1", "stat2"], // Main stats being challenged
+                       "statRequirements": {
+                         "stat": minValue,  // Minimum stats needed
+                       },
+                       "statRewards": {
+                         "stat": rewardValue // Stat improvements on completion
+                       },
+                       "difficulty": 1-5,    // Based on stat requirements vs current stats
+                       "category": "Physical/Mental/Social/Combined",
+                       "xpReward": number    // Based on difficulty and stat challenges
+                       "growthPotential": ["stat1", "stat2"] // Stats that can be improved
+                     }`
           },
           {
             role: "user",
@@ -217,11 +247,13 @@ export async function generateQuests(analysis: JournalAnalysis): Promise<Quest[]
       quest.xpReward = Math.max(50, Math.min(200, quest.xpReward));
       
       if (quest.statRewards) {
-        Object.entries(quest.statRewards).forEach(([stat, value]) => {
-          if (typeof value === 'number') {
-            quest.statRewards[stat] = Math.max(1, Math.min(3, value));
-          }
-        });
+        if (quest.statRewards) {
+          Object.entries(quest.statRewards).forEach(([stat, value]) => {
+            if (typeof value === 'number' && stat in quest.statRewards) {
+              quest.statRewards![stat as keyof typeof quest.statRewards] = Math.max(1, Math.min(3, value));
+            }
+          });
+        }
       }
     });
     

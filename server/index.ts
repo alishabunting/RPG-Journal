@@ -3,6 +3,7 @@ import session from "express-session";
 import passport from "passport";
 import pgSimple from "connect-pg-simple";
 import cors from "cors";
+import "dotenv/config";
 import { registerRoutes } from "./routes.js";
 import { setupVite, serveStatic } from "./vite.js";
 import { createServer } from "http";
@@ -10,11 +11,16 @@ import "./auth.js";
 import { db, checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db/index.js";
 
 // Enhanced port configuration for Replit with external port mapping
-const PORT = Number(process.env.PORT) || 5000;
+const PORT = 5000; // Force port 5000 for Replit
 const EXTERNAL_PORT = Number(process.env.EXTERNAL_PORT) || 80;
-const HOST = process.env.REPL_SLUG ? '0.0.0.0' : 'localhost';
-const isReplit = !!process.env.REPL_SLUG;
+const HOST = '0.0.0.0'; // Force 0.0.0.0 for Replit
+const isReplit = true;
 const isDev = process.env.NODE_ENV !== "production";
+let startupComplete = false;
+
+// Initialize empty environment variables with defaults if not set
+process.env.PORT = process.env.PORT || '5000';
+process.env.HOST = process.env.HOST || '0.0.0.0';
 
 console.log("=== Starting Server Initialization on Replit ===");
 console.log("Environment:", {
@@ -251,6 +257,7 @@ async function startServer() {
           server.listen(PORT, HOST, async () => {
             clearTimeout(startTimeout);
             console.log(`Server running on Replit at ${HOST}:${PORT}`);
+            startupComplete = true;
             
             if (process.env.REPL_SLUG && process.env.REPL_OWNER) {
               console.log(`Available at: https://${process.env.REPL_SLUG}--${EXTERNAL_PORT}.${process.env.REPL_OWNER}.repl.co`);
@@ -260,7 +267,7 @@ async function startServer() {
             if (isDev) {
               try {
                 console.log("Setting up Vite development server on Replit...");
-                await setupVite(app);
+                await setupVite(app, server);
                 console.log("Vite development server setup complete");
               } catch (error) {
                 console.error("Vite setup failed:", error);

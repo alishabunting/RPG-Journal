@@ -83,6 +83,22 @@ interface Quest {
   userId: number;
   createdAt?: Date;
   completedAt?: Date | null;
+  statRequirements?: {
+    strength?: number;
+    dexterity?: number;
+    constitution?: number;
+    intelligence?: number;
+    wisdom?: number;
+    charisma?: number;
+  };
+  statRewards?: {
+    strength?: number;
+    dexterity?: number;
+    constitution?: number;
+    intelligence?: number;
+    wisdom?: number;
+    charisma?: number;
+  };
 }
 
 // Already defined above, removing duplicate interface
@@ -220,7 +236,7 @@ async function updateCharacterProgress(
         }))
       ]
     };
-
+    
     await db.update(users)
       .set({ character: updatedCharacter })
       .where(eq(users.id, userId))
@@ -233,13 +249,103 @@ async function updateCharacterProgress(
   }
 }
 
-// Enhanced quest generation with retry logic
-async function generateQuestsWithRetry(analysis: any, maxRetries = 3): Promise<Quest[]> {
+function filterQuestsByStats(quests: Quest[], characterStats: StatWeights): Quest[] {
+  const GROWTH_THRESHOLD = 5; // Threshold for considering a stat as needing growth
+  const CHALLENGE_THRESHOLD = 2; // Max stat difference for reasonable challenge
+  
+  return quests
+    .map(quest => {
+      let suitabilityScore = 1;
+      let growthScore = 0;
+      let achievabilityScore = 1;
+      let balanceScore = 1;
+      
+      if (quest.statRequirements) {
+        const statDifferences: Record<string, number> = {};
+        let totalRequirements = 0;
+        let meetableRequirements = 0;
+        
+        // Calculate stat differences and initial scores
+        Object.entries(quest.statRequirements).forEach(([stat, requirement]) => {
+          const characterStat = characterStats[stat as keyof StatWeights] || 0;
+          const statDifference = characterStat - (requirement || 0);
+          statDifferences[stat] = statDifference;
+          totalRequirements++;
+          
+          // Achievability scoring
+          if (statDifference >= 0) {
+            meetableRequirements++;
+            achievabilityScore *= 1.2; // Bonus for meeting requirements
+          } else if (statDifference >= -CHALLENGE_THRESHOLD) {
+            meetableRequirements += 0.5;
+            achievabilityScore *= 0.8; // Challenging but doable
+          } else {
+            achievabilityScore *= 0.4; // Very challenging
+          }
+          
+          // Growth opportunity scoring
+          if (characterStat < GROWTH_THRESHOLD) {
+            const growthPotential = Math.min(CHALLENGE_THRESHOLD, Math.abs(statDifference));
+            growthScore += (growthPotential / CHALLENGE_THRESHOLD) * 0.3;
+          }
+        });
+        
+        // Calculate balance score based on requirement distribution
+        if (totalRequirements > 0) {
+          balanceScore = meetableRequirements / totalRequirements;
+        }
+        
+        // Analyze stat rewards for additional growth scoring
+        if (quest.statRewards) {
+          Object.entries(quest.statRewards).forEach(([stat, reward]) => {
+            const characterStat = characterStats[stat as keyof StatWeights] || 0;
+            if (characterStat < GROWTH_THRESHOLD) {
+              // Higher reward for stats that need improvement
+              growthScore += ((GROWTH_THRESHOLD - characterStat) / GROWTH_THRESHOLD) * 0.2;
+            }
+          });
+        }
+      }
+      
+      // Calculate final score with weighted components
+      const finalScore = (
+        (suitabilityScore * 0.3) + 
+        (growthScore * 0.3) + 
+        (achievabilityScore * 0.2) +
+        (balanceScore * 0.2)
+      );
+      
+      // Enhanced metadata for better quest presentation
+      return { 
+        quest, 
+        score: finalScore,
+        metadata: {
+          achievability: achievabilityScore,
+          growthPotential: growthScore,
+          balance: balanceScore,
+          recommended: finalScore > 0.6
+        }
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map(({ quest, metadata }) => ({
+      ...quest,
+      metadata // Include metadata in the returned quest object
+    }));
+}
+    // Enhanced quest generation with retry logic and stat-based filtering
+async function generateQuestsWithRetry(analysis: any, characterStats: StatWeights, maxRetries = 3): Promise<Quest[]> {
   let lastError: Error | null = null;
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      return await generateQuests(analysis);
+      const generatedQuests = await generateQuests(analysis);
+      
+      // Apply stat-based filtering and scoring
+      const filteredQuests = filterQuestsByStats(generatedQuests, characterStats);
+      
+      // Take top 3-5 most suitable quests
+      return filteredQuests.slice(0, Math.min(5, filteredQuests.length));
     } catch (error: any) {
       console.error(`Quest generation attempt ${attempt + 1} failed:`, error);
       lastError = error;
@@ -375,8 +481,10 @@ export function registerRoutes(app: Express) {
         updatedCharacter = await updateCharacterProgress(userId, analysis, client);
         
         if (!aiError) { // Only try to generate quests if AI analysis succeeded
-          quests = await generateQuestsWithRetry(analysis);
+          const character = user.character as any;
+          quests = await generateQuestsWithRetry(analysis, character.stats);
           if (quests && quests.length > 0) {
+            
             await db.insert(quests).values(
               quests.map(quest => ({
                 userId,

@@ -24,27 +24,99 @@ const DEFAULT_CHARACTER = {
   achievements: []
 };
 
-// Quest categories and templates
+// Quest categories and templates with stat requirements and rewards
 const QUEST_TEMPLATES = {
   wellness: [
-    { title: "Morning Exercise", description: "Complete a morning workout routine", difficulty: 2 },
-    { title: "Healthy Meal", description: "Prepare a balanced, nutritious meal", difficulty: 1 },
-    { title: "Meditation", description: "Practice mindfulness for 10 minutes", difficulty: 1 }
+    { 
+      title: "Morning Exercise",
+      description: "Complete a morning workout routine",
+      difficulty: 2,
+      statRequirements: { constitution: 2 },
+      statRewards: { strength: 0.2, constitution: 0.3 }
+    },
+    { 
+      title: "Healthy Meal",
+      description: "Prepare a balanced, nutritious meal",
+      difficulty: 1,
+      statRequirements: { wisdom: 1 },
+      statRewards: { constitution: 0.2, wisdom: 0.1 }
+    },
+    { 
+      title: "Meditation",
+      description: "Practice mindfulness for 10 minutes",
+      difficulty: 1,
+      statRequirements: { wisdom: 2 },
+      statRewards: { wisdom: 0.3, charisma: 0.1 }
+    }
   ],
   social: [
-    { title: "Social Connection", description: "Reach out to a friend or family member", difficulty: 1 },
-    { title: "Group Activity", description: "Participate in a group activity or event", difficulty: 2 },
-    { title: "Kind Gesture", description: "Perform a random act of kindness", difficulty: 1 }
+    { 
+      title: "Social Connection",
+      description: "Reach out to a friend or family member",
+      difficulty: 1,
+      statRequirements: { charisma: 1 },
+      statRewards: { charisma: 0.2, wisdom: 0.1 }
+    },
+    { 
+      title: "Group Activity",
+      description: "Participate in a group activity or event",
+      difficulty: 2,
+      statRequirements: { charisma: 2, constitution: 1 },
+      statRewards: { charisma: 0.3, strength: 0.1 }
+    },
+    { 
+      title: "Kind Gesture",
+      description: "Perform a random act of kindness",
+      difficulty: 1,
+      statRequirements: { wisdom: 1, charisma: 1 },
+      statRewards: { charisma: 0.2, wisdom: 0.2 }
+    }
   ],
   growth: [
-    { title: "Skill Development", description: "Learn something new or practice a skill", difficulty: 2 },
-    { title: "Reading Quest", description: "Read a book or article for personal growth", difficulty: 1 },
-    { title: "Creative Expression", description: "Express yourself through art, writing, or music", difficulty: 2 }
+    { 
+      title: "Skill Development",
+      description: "Learn something new or practice a skill",
+      difficulty: 2,
+      statRequirements: { intelligence: 2 },
+      statRewards: { intelligence: 0.3, wisdom: 0.1 }
+    },
+    { 
+      title: "Reading Quest",
+      description: "Read a book or article for personal growth",
+      difficulty: 1,
+      statRequirements: { intelligence: 1 },
+      statRewards: { intelligence: 0.2, wisdom: 0.2 }
+    },
+    { 
+      title: "Creative Expression",
+      description: "Express yourself through art, writing, or music",
+      difficulty: 2,
+      statRequirements: { intelligence: 1, charisma: 1 },
+      statRewards: { charisma: 0.2, intelligence: 0.2 }
+    }
   ],
   achievement: [
-    { title: "Goal Setting", description: "Set and achieve a personal or professional goal", difficulty: 2 },
-    { title: "Task Completion", description: "Complete an important task or project", difficulty: 2 },
-    { title: "Skill Mastery", description: "Master a specific skill or technique", difficulty: 3 }
+    { 
+      title: "Goal Setting",
+      description: "Set and achieve a personal or professional goal",
+      difficulty: 2,
+      statRequirements: { wisdom: 2, intelligence: 1 },
+      statRewards: { wisdom: 0.2, intelligence: 0.2 }
+    },
+    { 
+      title: "Task Completion",
+      description: "Complete an important task or project",
+      difficulty: 2,
+      statRequirements: { intelligence: 2 },
+      statRewards: { intelligence: 0.3, wisdom: 0.1 }
+    },
+    { 
+      title: "Skill Mastery",
+      description: "Master a specific skill or technique",
+      difficulty: 3,
+      statRequirements: { intelligence: 3, wisdom: 2 },
+      statRewards: { intelligence: 0.4, wisdom: 0.2 }
+    }
   ]
 };
 
@@ -81,6 +153,18 @@ export type Journal = {
   content: string;
   createdAt: string;
   tags: string[];
+  mood?: string;
+  analysis?: {
+    mood: string;
+    tags: string[];
+    growthAreas: string[];
+    statChanges: Record<string, number>;
+    characterProgression?: {
+      insights: string[];
+      skillsImproved: string[];
+      relationships: any[];
+    };
+  };
 };
 
 export type Quest = {
@@ -89,10 +173,68 @@ export type Quest = {
   description: string;
   category: string;
   status: 'active' | 'completed';
+  difficulty?: number;
+  statRequirements?: {
+    strength?: number;
+    dexterity?: number;
+    constitution?: number;
+    intelligence?: number;
+    wisdom?: number;
+    charisma?: number;
+  };
+  statRewards?: {
+    strength?: number;
+    dexterity?: number;
+    constitution?: number;
+    intelligence?: number;
+    wisdom?: number;
+    charisma?: number;
+  };
+  metadata?: {
+    achievability: number;
+    growthPotential: number;
+    balance: number;
+    recommended: boolean;
+  };
 };
 
 // Helper functions
 const generateId = () => Math.random().toString(36).substring(2, 15);
+// Helper functions for quest recommendation scoring
+function calculateAchievabilityScore(requirements: Record<string, number>, stats: Record<string, number>): number {
+  if (Object.keys(requirements).length === 0) return 1;
+  
+  const scores = Object.entries(requirements).map(([stat, required]) => {
+    const current = stats[stat] || 0;
+    if (current >= required) return 1;
+    return Math.max(0, current / required);
+  });
+  
+  return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+}
+
+function calculateGrowthScore(rewards: Record<string, number>, growthPotential: Record<string, number>): number {
+  if (Object.keys(rewards).length === 0) return 0.5;
+  
+  const scores = Object.entries(rewards).map(([stat, reward]) => {
+    const potential = growthPotential[stat] || 0;
+    return reward * potential;
+  });
+  
+  return Math.min(1, scores.reduce((sum, score) => sum + score, 0) / scores.length);
+}
+
+function calculateBalanceScore(requirements: Record<string, number>, stats: Record<string, number>): number {
+  if (Object.keys(requirements).length === 0) return 1;
+  
+  const differences = Object.entries(requirements).map(([stat, required]) => {
+    const current = stats[stat] || 0;
+    return Math.abs(current - required);
+  });
+  
+  const avgDifference = differences.reduce((sum, diff) => sum + diff, 0) / differences.length;
+  return Math.max(0, 1 - (avgDifference / 5)); // Scale difference to 0-1 range
+}
 
 // Storage service
 export const storage = {
@@ -139,7 +281,7 @@ export const storage = {
       content,
       createdAt: new Date().toISOString(),
       tags: analysis.tags,
-      mood: analysis.mood
+      analysis: analysis
     };
     
     // Update character stats based on analysis
@@ -208,7 +350,13 @@ function generateTags(content: string): string[] {
 function analyzeContent(content: string): {
   mood: string;
   tags: string[];
+  growthAreas: string[];
   statChanges: Record<string, number>;
+  characterProgression: {
+    insights: string[];
+    skillsImproved: string[];
+    relationships: any[];
+  };
 } {
   const text = content.toLowerCase();
   const tags = generateTags(content);
@@ -231,36 +379,90 @@ function analyzeContent(content: string): {
     achievement: text.includes('complete') || text.includes('finish') || text.includes('accomplish') ? 0.2 : 0
   };
   
-  return { mood, tags, statChanges };
+  return { 
+    mood, 
+    tags, 
+    growthAreas: [], 
+    statChanges,
+    characterProgression: {
+      insights: [],
+      skillsImproved: [],
+      relationships: []
+    }
+  };
 }
 
 function generateQuestsFromAnalysis(analysis: ReturnType<typeof analyzeContent>): Quest[] {
   const quests: Quest[] = [];
   const categories = Object.keys(QUEST_TEMPLATES) as Array<keyof typeof QUEST_TEMPLATES>;
+  const user = storage.getUser();
   
-  // Generate 1-3 relevant quests based on the journal content
-  const relevantCategories = categories.filter(category => 
-    analysis.statChanges[category] > 0 || analysis.tags.includes(category)
-  );
+  if (!user) return [];
   
-  if (relevantCategories.length === 0) {
-    // If no relevant categories, pick one randomly
-    relevantCategories.push(categories[Math.floor(Math.random() * categories.length)]);
-  }
+  // Get character stats
+  const characterStats = user.character.stats;
   
-  relevantCategories.forEach(category => {
-    const template = QUEST_TEMPLATES[category][
-      Math.floor(Math.random() * QUEST_TEMPLATES[category].length)
-    ];
-    
-    quests.push({
-      id: generateId(),
-      title: template.title,
-      description: template.description,
-      category: category,
-      status: 'active'
+  // Calculate stat growth potential and balance
+  const statGrowthPotential = Object.entries(characterStats)
+    .reduce((acc, [stat, value]) => {
+      acc[stat] = Math.max(0, 10 - value) / 10; // Higher potential for lower stats
+      return acc;
+    }, {} as Record<string, number>);
+  
+  // Generate recommended quests based on stats and growth potential
+  const recommendedQuests = categories.flatMap(category => {
+    return QUEST_TEMPLATES[category].map(template => {
+      // Calculate quest suitability scores
+      const achievabilityScore = calculateAchievabilityScore(template.statRequirements || {}, characterStats);
+      const growthScore = calculateGrowthScore(template.statRewards || {}, statGrowthPotential);
+      const balanceScore = calculateBalanceScore(template.statRequirements || {}, characterStats);
+      
+      const finalScore = (achievabilityScore * 0.4) + (growthScore * 0.4) + (balanceScore * 0.2);
+      
+      return {
+        quest: {
+          id: generateId(),
+          title: template.title,
+          description: template.description,
+          category,
+          status: 'active' as const,
+          difficulty: template.difficulty,
+          statRequirements: template.statRequirements,
+          statRewards: template.statRewards,
+          metadata: {
+            achievability: achievabilityScore,
+            growthPotential: growthScore,
+            balance: balanceScore,
+            recommended: finalScore > 0.6
+          }
+        },
+        score: finalScore
+      };
     });
   });
+  
+  // Sort quests by score and take top recommendations
+  const sortedQuests = recommendedQuests
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5) // Take top 5 recommended quests
+    .map(({ quest }) => quest)
+    .filter(quest => {
+      // Additional filtering for quest suitability
+      if (!quest.statRequirements) return true;
+      
+      // Calculate how many requirements are within reasonable reach
+      const reqCount = Object.keys(quest.statRequirements).length;
+      const meetableReqs = Object.entries(quest.statRequirements).reduce((count, [stat, required]) => {
+        const current = characterStats[stat as keyof typeof characterStats] || 0;
+        // Consider a requirement meetable if within 2 points or already met
+        return count + (current >= required || current >= required - 2 ? 1 : 0);
+      }, 0);
+      
+      // Quest is suitable if player can meet at least 70% of requirements
+      return reqCount === 0 || (meetableReqs / reqCount) >= 0.7;
+    });
+  
+  quests.push(...sortedQuests);
   
   return quests;
 }

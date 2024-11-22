@@ -10,10 +10,12 @@ type StatProps = {
   user: {
     character: {
       stats: {
-        wellness: number;
-        social: number;
-        growth: number;
-        achievement: number;
+        strength: number;
+        dexterity: number;
+        constitution: number;
+        intelligence: number;
+        wisdom: number;
+        charisma: number;
       };
     };
   };
