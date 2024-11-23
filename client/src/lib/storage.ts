@@ -509,6 +509,12 @@ function analyzeContent(content: string): {
   };
 
   // Return the final analysis results with enhanced progression tracking
+  // Determine mood based on mood scores
+  const mood = Object.entries(moodScores).reduce<keyof typeof moodScores>((a, [key, value]) => {
+    const currentScore = moodScores[a];
+    return currentScore > value ? a : key as keyof typeof moodScores;
+  }, 'neutral');
+
   return {
     mood,
     tags,
@@ -583,7 +589,8 @@ function generateQuestsFromAnalysis(analysis: ReturnType<typeof analyzeContent>)
       const meetableReqs = Object.entries(quest.statRequirements).reduce((count, [stat, required]) => {
         const current = characterStats[stat as keyof typeof characterStats] || 0;
         // Consider a requirement meetable if within 2 points or already met
-        return count + (current >= required || current >= required - 2 ? 1 : 0);
+        const requiredValue = Number(required);
+        return count + (current >= requiredValue || current >= requiredValue - 2 ? 1 : 0);
       }, 0);
       
       // Quest is suitable if player can meet at least 70% of requirements

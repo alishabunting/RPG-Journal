@@ -1,4 +1,4 @@
-import type { StatWeights } from './character';
+import type { StatWeights } from './character.js';
 
 export interface QuestRequirement {
   stat: string;

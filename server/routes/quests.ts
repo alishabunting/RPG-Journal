@@ -1,30 +1,13 @@
 import type { Express } from "express";
 import { ensureAuthenticated } from "../auth.js";
 import { getDb, pool } from "../../db/index.js";
-import { quests } from "../../db/schema.js";
+import { quests, users } from "../../db/schema.js";
 import { eq, desc, and, gt, asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import { generateQuests, calculateQuestCompletion } from "../openai.js";
 import type { User, Quest } from "../../db/schema.js";
-
-// Quest chain types for storyline progression
-interface QuestChain {
-  id: string;
-  title: string;
-  description: string;
-  quests: Quest[];
-  requirements: {
-    previousQuests?: number[];
-interface QuestChain {
-  id: string;
-  title: string;
-  description: string;
-  quests: Quest[];
-  requirements: {
-    minLevel: number;
-    stats: Record<string, number>;
-  };
-}
+import type { Character } from "../types/character.js";
+import type { QuestChain } from "../types/quest.js";
 
 // Update character progress after completing a quest
 async function updateCharacterProgress(
@@ -36,9 +19,12 @@ async function updateCharacterProgress(
   }
 ): Promise<Character> {
   const db = await getDb();
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId)
-  });
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+    .execute();
 
   if (!user) throw new Error('User not found');
 
@@ -70,10 +56,7 @@ async function updateCharacterProgress(
 
   return character;
 }
-    minLevel?: number;
-    stats?: Record<string, number>;
-  };
-}
+    
 
 // Calculate storyline progress for a completed quest
 async function calculateStorylineProgress(quest: Quest): Promise<number> {
@@ -92,16 +75,7 @@ async function calculateStorylineProgress(quest: Quest): Promise<number> {
   const completedQuests = storylineQuests.filter(q => q.status === 'completed').length;
   return (completedQuests / totalQuests) * 100;
 }
-interface QuestProgress {
-  questId: string;
-  status: 'active' | 'completed';
-  completedAt?: Date;
-  metrics?: {
-    timeSpent?: number;
-    attempts?: number;
-    difficultyRating?: number;
-  };
-}
+// Using QuestProgress from types/quest.ts
 
 export function registerQuestRoutes(app: Express) {
   // Get available quests for user with storyline progression
@@ -143,7 +117,7 @@ export function registerQuestRoutes(app: Express) {
 
   // Complete a quest and progress storyline
   app.post("/api/quests/:questId/complete", ensureAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.id;
+    const userId = (req.user as User).id;
     const questId = parseInt(req.params.questId);
     let client;
 
@@ -164,7 +138,8 @@ export function registerQuestRoutes(app: Express) {
         .returning();
 
       if (!updatedQuest) {
-        return res.status(404).json({ error: "Quest not found" });
+        res.status(404).json({ error: "Quest not found" });
+        return;
       }
 
       // Calculate rewards and progress
@@ -210,7 +185,23 @@ function organizeQuestChains(quests: Quest[]): QuestChain[] {
       id: `chain-${category.toLowerCase()}`,
       title: `${category} Journey`,
       description: `Progress through ${category} related challenges`,
-      quests: sortedQuests,
+      quests: sortedQuests.map(q => ({
+        id: q.id,
+        title: q.title,
+        description: q.description,
+        difficulty: q.difficulty,
+        category: q.category,
+        status: q.status,
+        userId: q.userId,
+        createdAt: q.createdAt,
+        completedAt: q.completedAt,
+        statRequirements: q.statRequirements,
+        statRewards: q.statRewards,
+        storylineId: q.storylineId,
+        previousQuestId: q.previousQuestId,
+        nextQuestId: q.nextQuestId,
+        metadata: q.metadata
+      })),
       requirements: {
         minLevel: Math.max(...sortedQuests.map(q => q.difficulty || 0)) - 2,
         stats: calculateChainStatRequirements(sortedQuests)
@@ -240,7 +231,9 @@ function calculateChainStatRequirements(quests: Quest[]): Record<string, number>
   quests.forEach(quest => {
     if (quest.statRequirements) {
       Object.entries(quest.statRequirements).forEach(([stat, value]) => {
-        requirements[stat] = Math.max(requirements[stat] || 0, value || 0);
+        if (typeof value === 'number') {
+          requirements[stat] = Math.max(requirements[stat] || 0, value);
+        }
       });
     }
   });

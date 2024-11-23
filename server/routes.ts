@@ -1,4 +1,4 @@
-import type { Express } from "express";
+ur te tRoute import type { Express } from "express";
 import { getDb, pool } from "../db/index.js";
 import { users, journals, quests } from "../db/schema.js";
 import { eq } from "drizzle-orm";
@@ -8,12 +8,11 @@ import type { User } from "../db/schema.js";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import type { PoolClient } from "@neondatabase/serverless";
 import { processStorylines, isQuestAvailable } from "./utils/storylineProcessor.js";
+import type { StatWeights, Character, CharacterProgression } from './types/character';
+import type { Quest, QuestRewards, QuestChain } from './types/quest';
 
 // Enhanced character progress update with validation and error handling
 // Helper functions for advanced RPG progression
-
-import type { StatWeights, Character, CharacterProgression } from './types/character';
-import type { Quest, QuestRewards, QuestChain } from './types/quest';
 
 // XP scaling configuration
 const XP_CONFIG = {
@@ -35,66 +34,8 @@ const STAT_KEYWORDS = {
   charisma: ['social', 'leadership', 'communication', 'persuasion', 'empathy']
 };
 
-interface QuestRewards {
-  xpGained: number;
-  statUpdates: Record<string, number>;
-  achievements: string[];
-}
-
-interface Analysis {
-  mood?: string;
-  tags?: string[];
-  content?: string;
-  growthAreas?: string[];
-  characterProgression?: {
-    insights?: string[];
-    skillsImproved?: string[];
-  };
-  statChanges?: Record<string, number>;
-}
-
-interface Character {
-  name: string;
-  class: string;
-  level: number;
-  xp: number;
-  stats: StatWeights;
-  achievements: Array<{
-    title: string;
-    description?: string;
-    timestamp: string;
-  }>;
-}
-
-interface Quest {
-  id: number;
-  title: string;
-  description: string;
-  difficulty: number;
-  category: string;
-  status: 'active' | 'completed';
-  userId: number;
-  createdAt?: Date;
-  completedAt?: Date | null;
-  statRequirements?: {
-    strength?: number;
-    dexterity?: number;
-    constitution?: number;
-    intelligence?: number;
-    wisdom?: number;
-    charisma?: number;
-  };
-  statRewards?: {
-    strength?: number;
-    dexterity?: number;
-    constitution?: number;
-    intelligence?: number;
-    wisdom?: number;
-    charisma?: number;
-  };
-}
-
-// Already defined above, removing duplicate interface
+// Import Analysis type from openai.ts
+import type { JournalAnalysis as Analysis } from "./openai.js";
 
 function calculateStatWeights(analysis: Analysis, level: number): StatWeights {
   const baseWeights: StatWeights = {
@@ -230,14 +171,14 @@ async function updateCharacterProgress(
     // AI-driven stat growth with dynamic weights
     const statWeights = calculateStatWeights(analysis, level);
     Object.entries(analysis.statChanges || {}).forEach(([stat, change]) => {
-      if (stats[stat] !== undefined) {
+      if (stat in stats && typeof stats[stat as keyof typeof stats] === 'number') {
         const numericChange = Number(change);
         if (!isNaN(numericChange)) {
           // Apply weighted stat changes based on analysis and level
-          const weightedChange = numericChange * statWeights[stat];
+          const weightedChange = numericChange * (statWeights[stat as keyof StatWeights] || 1);
           // Bound the change between -1 and 1, scaled by level
           const boundedChange = Math.max(-1, Math.min(1, weightedChange)) * (1 + (level * 0.05));
-          stats[stat] = Math.max(1, Math.min(10, stats[stat] + boundedChange));
+          stats[stat as keyof typeof stats] = Math.max(1, Math.min(10, stats[stat as keyof typeof stats] + boundedChange));
         }
       }
     });
@@ -403,7 +344,7 @@ export function registerRoutes(app: Express) {
   registerQuestRoutes(app);
 
   // Character update endpoint with enhanced stat progression
-  app.put("/api/journal", ensureAuthenticated, async (req, res) => {
+  app.put("/api/journal", ensureAuthenticated, async (req, res): Promise<void> => {
     const userId = (req.user as User).id;
     let client;
 
@@ -426,7 +367,16 @@ export function registerRoutes(app: Express) {
 
   // Enhanced journal entry processing with proper date handling
   async function processJournalEntry(userId: number, content: string, client: PoolClient): Promise<{
-    journal: any;
+    journal: {
+      id: number;
+      userId: number;
+      content: string;
+      createdAt: Date;
+      mood: string;
+      tags: string[];
+      analysis: Analysis;
+      characterProgression: CharacterProgression;
+    };
     character: Character;
     quests: Quest[];
   }> {
@@ -447,9 +397,9 @@ export function registerRoutes(app: Express) {
       
       try {
         analysis = await analyzeEntry(content);
-      } catch (error) {
-        console.error('AI analysis failed:', error);
-        aiError = error;
+      } catch (err) {
+        console.error('AI analysis failed:', err);
+        aiError = err;
         analysis = {
           mood: "neutral",
           tags: [],
@@ -465,7 +415,7 @@ export function registerRoutes(app: Express) {
             skillsImproved: [],
             relationships: []
           }
-        };
+        } as Analysis;
       }
 
       // Save the journal entry
@@ -483,67 +433,51 @@ export function registerRoutes(app: Express) {
       const character = await updateCharacterProgress(userId, analysis, client);
       
       // Generate quests with improved stat-based filtering
-      const quests = await generateQuestsWithRetry(analysis, character.stats);
+      const generatedQuests = await generateQuestsWithRetry(analysis, character.stats);
       
       // Save generated quests with enhanced metadata
-      if (quests.length > 0) {
+      if (generatedQuests.length > 0) {
         await db.insert(quests).values(
-          quests.map(quest => ({
+          generatedQuests.map(quest => ({
             userId,
             ...quest,
             status: 'active',
             createdAt: new Date(),
             metadata: {
               ...quest.metadata,
-              contentAnalysis: {
-                matchedTags: analysis.tags || [],
-                growthAreas: analysis.growthAreas || [],
-                sentimentImpact: analysis.mood || 'neutral'
-              }
+              achievability: quest.metadata?.achievability || 0.5,
+              growthPotential: quest.metadata?.growthPotential || 0.3,
+              balance: quest.metadata?.balance || 0.5,
+              recommended: quest.metadata?.recommended || false,
+              storylineProgress: quest.metadata?.storylineProgress || 0
             }
           }))
-        ).execute();
+        );
       }
 
+      // Return the complete result with metadata
       return {
         journal: newJournal,
         character,
-        quests
-      };
-      
-      // Generate quests with improved stat-based filtering
-      let quests: Quest[] = [];
-      try {
-        quests = await generateQuestsWithRetry(analysis, character.stats);
-        
-        // Save generated quests
-        if (quests.length > 0) {
-          await db.insert(quests).values(
-            quests.map(quest => ({
-              userId,
-              ...quest,
-              status: 'active',
-              createdAt: new Date()
-            }))
-          ).execute();
+        quests: generatedQuests,
+        metadata: {
+          aiError: aiError ? String(aiError) : null,
+          statChanges: analysis.statChanges || {},
+          relatedInsights: analysis.characterProgression?.insights || [],
+          mood: analysis.mood || 'neutral',
+          growthAreas: analysis.growthAreas || []
         }
-      } catch (questError) {
-        console.error('Error generating quests:', questError);
-        // Continue with empty quests array if quest generation fails
-      }
-
-      return {
-        journal: newJournal,
-        character,
-        quests
       };
     } catch (error) {
       console.error('Error processing journal entry:', error);
       throw error;
     }
   }
-    }
+});
 
+  // Additional routes can be added here
+
+  async function processJournalEntry(userId: number, content: string, client: any) {
     let analysis = null;
     let aiError = null;
     
@@ -792,18 +726,6 @@ export function registerRoutes(app: Express) {
       }
     }
   });
-      }
-      console.error('Error updating character:', error);
-      res.status(500).json({ 
-        message: 'Failed to update character',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    } finally {
-      if (client) {
-        client.release();
-      }
-    }
-  });
 
   // Journal routes with proper date handling
   app.post("/api/journals", ensureAuthenticated, async (req, res) => {
@@ -974,17 +896,18 @@ export function registerRoutes(app: Express) {
         .returning();
       
       await client.query('COMMIT');
-      res.json(updatedUser);
-      const db = await getDb();
-      await db
-        .update(users)
-        .set({ character: req.body })
-        .where(eq(users.id, userId));
       console.log(`Character updated for user: ${userId}`);
-      res.sendStatus(200);
+      res.json(updatedUser);
     } catch (error) {
+      if (client) {
+        await client.query('ROLLBACK');
+      }
       console.error('Character update error:', error);
       res.status(500).json({ message: "Error updating character" });
+    } finally {
+      if (client) {
+        client.release();
+      }
     }
   });
 
@@ -1014,25 +937,22 @@ export function registerRoutes(app: Express) {
         success: true,
         ...result
       });
-      
-      // Get user data first to ensure it exists
-      const user = await db.query.users.findFirst({
-        where: eq(users.id, userId)
-      });
-
-      if (!user) {
-        throw new Error('User not found');
+    } catch (error) {
+      if (client) {
+        await client.query('ROLLBACK');
       }
-
-      let analysis = null;
-      let aiError = null;
-      
-      // Try to analyze the entry using OpenAI with fallback values
-      try {
-        analysis = await analyzeEntry(content);
-      } catch (error) {
-        console.error('AI analysis failed:', error);
-        aiError = error;
+      console.error('Error processing journal entry:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process journal entry',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  });
         // Provide fallback analysis with proper stat structure
         analysis = {
           mood: "neutral",
