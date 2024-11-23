@@ -363,6 +363,95 @@ async function generateQuestsWithRetry(analysis: any, characterStats: StatWeight
 }
 
 export function registerRoutes(app: Express) {
+  // Enhanced journal entry processing with proper date handling
+  async function processJournalEntry(userId: number, content: string, client: PoolClient) {
+    const db = drizzle(client, { schema: { users, journals, quests } });
+    
+    // Get user data first to ensure it exists
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId)
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    let analysis = null;
+    let aiError = null;
+    
+    try {
+      analysis = await analyzeEntry(content);
+    } catch (error) {
+      console.error('AI analysis failed:', error);
+      aiError = error;
+      analysis = {
+        mood: "neutral",
+        tags: [],
+        growthAreas: [],
+        statChanges: {
+          strength: 0,
+          dexterity: 0,
+          constitution: 0,
+          intelligence: 0,
+          wisdom: 0,
+          charisma: 0
+        },
+        characterProgression: {
+          insights: [],
+          skillsImproved: [],
+          relationships: []
+        }
+      };
+    }
+
+    // Save the journal entry
+    const [newJournal] = await db.insert(journals).values({
+      userId,
+      content,
+      createdAt: new Date(),
+      mood: analysis.mood || 'neutral',
+      tags: Array.isArray(analysis.tags) ? analysis.tags : [],
+      analysis,
+      characterProgression: analysis.characterProgression || {}
+    }).returning();
+
+    // Update character progress
+    const character = await updateCharacterProgress(userId, analysis, client);
+    
+    // Generate quests
+    let quests: Quest[] = [];
+    try {
+      quests = await generateQuestsWithRetry(analysis, character.stats);
+      
+      // Insert new quests
+      if (quests.length > 0) {
+        await db.insert(quests).values(
+          quests.map(quest => ({
+            userId,
+            title: quest.title,
+            description: quest.description,
+            category: quest.category,
+            difficulty: quest.difficulty,
+            xpReward: quest.xpReward || 50,
+            statRewards: quest.statRewards || {},
+            timeframe: quest.timeframe,
+            status: 'active',
+            createdAt: new Date()
+          }))
+        );
+      }
+    } catch (error) {
+      console.error('Quest generation failed:', error);
+    }
+
+    return {
+      journal: newJournal,
+      character,
+      quests,
+      aiError
+    };
+  }
+
   // Add connection status endpoint at the top
   app.get("/api/db/status", async (req, res) => {
     try {
@@ -414,7 +503,193 @@ export function registerRoutes(app: Express) {
   // Character routes
   app.put("/api/character", ensureAuthenticated, async (req, res) => {
     const userId = (req.user as User).id;
+    let client;
+    } catch (error) {
+      if (client) {
+        await client.query('ROLLBACK');
+      }
+      console.error('Error updating character:', error);
+      res.status(500).json({ 
+        message: 'Failed to update character',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  });
+
+  // Journal routes with proper date handling
+  app.post("/api/journals", ensureAuthenticated, async (req, res) => {
+    const userId = (req.user as User).id;
+    const { content } = req.body;
+    
+    if (!content?.trim()) {
+      return res.status(400).json({ message: "Content is required" });
+    }
+
+    let client;
     try {
+      client = await pool.connect();
+      await client.query('BEGIN');
+      
+      const result = await processJournalEntry(userId, content, client);
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (error) {
+      if (client) {
+        await client.query('ROLLBACK');
+      }
+      console.error('Error processing journal entry:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to process journal entry',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  });
+
+  // Quest routes
+  app.post("/api/quests/:questId/complete", ensureAuthenticated, async (req, res) => {
+    const userId = (req.user as User).id;
+    const questId = parseInt(req.params.questId);
+    
+    if (isNaN(questId)) {
+      return res.status(400).json({ message: "Invalid quest ID" });
+    }
+    
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query('BEGIN');
+      
+      const db = drizzle(client, { schema: { users, quests } });
+      
+      // Get the quest and verify ownership
+      const quest = await db.query.quests.findFirst({
+        where: and(
+          eq(quests.id, questId),
+          eq(quests.userId, userId)
+        )
+      });
+      
+      if (!quest) {
+        return res.status(404).json({ message: "Quest not found" });
+      }
+      
+      if (quest.status === 'completed') {
+        return res.status(400).json({ message: "Quest already completed" });
+      }
+      
+      // Get current character stats
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, userId)
+      });
+      
+      if (!user?.character?.stats) {
+        return res.status(400).json({ message: "Character stats not found" });
+      }
+      
+      // Calculate rewards
+      const rewards = await calculateQuestCompletion(questId, user.character.stats);
+      
+      // Apply level scaling and difficulty multipliers
+      const levelScaling = Math.pow(1 + XP_CONFIG.LEVEL_SCALING, user.character.level - 1);
+      const difficultyMultiplier = 1 + ((quest.difficulty || 1) - 1) * XP_CONFIG.DIFFICULTY_SCALING;
+      
+      // Scale XP reward
+      rewards.xpGained = Math.round(rewards.xpGained * levelScaling * difficultyMultiplier);
+      
+      // Scale stat updates based on character level and quest difficulty with caps
+      Object.entries(rewards.statUpdates).forEach(([stat, value]) => {
+        const statBonus = value * (1 + (user.character.level * XP_CONFIG.STAT_BONUS_SCALING));
+        const boundedValue = Math.max(-1, Math.min(1, statBonus * difficultyMultiplier));
+        (rewards.statUpdates as Record<string, number>)[stat] = boundedValue;
+      });
+      
+      // Update quest status and character
+      await db.update(quests)
+        .set({
+          status: 'completed',
+          completedAt: new Date()
+        })
+        .where(eq(quests.id, questId));
+      
+      const character = user.character;
+      character.xp += rewards.xpGained;
+      character.level = Math.floor(character.xp / 1000) + 1;
+      
+      // Apply stat updates
+      Object.entries(rewards.statUpdates).forEach(([stat, value]) => {
+        if (character.stats[stat] !== undefined) {
+          character.stats[stat] = Math.max(
+            XP_CONFIG.MIN_STAT_VALUE,
+            Math.min(XP_CONFIG.MAX_STAT_VALUE, character.stats[stat] + value)
+          );
+        }
+      });
+      
+      // Add achievements
+      if (rewards.achievements?.length) {
+        character.achievements = [
+          ...(character.achievements || []),
+          ...rewards.achievements.map(achievement => ({
+            title: achievement,
+            timestamp: new Date().toISOString()
+          }))
+        ];
+      }
+      
+      await db.update(users)
+        .set({ character })
+        .where(eq(users.id, userId));
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        success: true,
+        rewards,
+        character
+      });
+    } catch (error) {
+      if (client) {
+        await client.query('ROLLBACK');
+      }
+      console.error('Error completing quest:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to complete quest',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  });
+}
+    try {
+      client = await pool.connect();
+      await client.query('BEGIN');
+      
+      const db = drizzle(client, { schema: { users } });
+      const [updatedUser] = await db.update(users)
+        .set({ character: req.body })
+        .where(eq(users.id, userId))
+        .returning();
+      
+      await client.query('COMMIT');
+      res.json(updatedUser);
       const db = await getDb();
       await db
         .update(users)
@@ -433,13 +708,37 @@ export function registerRoutes(app: Express) {
     const userId = (req.user as User).id;
     const { content } = req.body;
     
+    if (!content || typeof content !== 'string') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid journal content' 
+      });
+    }
+
     // Get a client from the pool for transaction
-    const client = await pool.connect();
-    const db = drizzle(client, { schema: { users, journals, quests } });
-    
+    let client;
     try {
+      client = await pool.connect();
       await client.query('BEGIN'); // Start transaction
       
+      const result = await processJournalEntry(userId, content, client);
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        success: true,
+        ...result
+      });
+      
+      // Get user data first to ensure it exists
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, userId)
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
       let analysis = null;
       let aiError = null;
       
@@ -449,12 +748,19 @@ export function registerRoutes(app: Express) {
       } catch (error) {
         console.error('AI analysis failed:', error);
         aiError = error;
-        // Provide fallback analysis
+        // Provide fallback analysis with proper stat structure
         analysis = {
           mood: "neutral",
           tags: [],
           growthAreas: [],
-          statChanges: { wellness: 0, social: 0, growth: 0, achievement: 0 },
+          statChanges: {
+            strength: 0,
+            dexterity: 0,
+            constitution: 0,
+            intelligence: 0,
+            wisdom: 0,
+            charisma: 0
+          },
           characterProgression: {
             insights: [],
             skillsImproved: [],
@@ -462,15 +768,257 @@ export function registerRoutes(app: Express) {
           }
         };
       }
+
+      const currentDate = new Date().toISOString();
+      
+      // Save the journal entry with analysis results and proper date handling
+      const [newJournal] = await db.insert(journals).values({
+        userId,
+        content,
+        createdAt: new Date(),
+        mood: analysis.mood || 'neutral',
+        tags: Array.isArray(analysis.tags) ? analysis.tags : [],
+        analysis: analysis,
+        characterProgression: analysis.characterProgression || {}
+      }).returning();
+      
+      // Update character progress within the same transaction
+      const updatedCharacter = await updateCharacterProgress(userId, analysis, client);
+      
+      // Generate quests based on the analysis and character stats
+      let generatedQuests: Quest[] = [];
+      try {
+        generatedQuests = await generateQuestsWithRetry(analysis, updatedCharacter.stats);
+        
+        // Insert new quests
+        await db.insert(quests).values(
+          generatedQuests.map(quest => ({
+            userId,
+            title: quest.title,
+            description: quest.description,
+            category: quest.category,
+            difficulty: quest.difficulty,
+            xpReward: quest.xpReward || 50,
+            statRewards: quest.statRewards || {},
+            timeframe: quest.timeframe,
+            status: 'active',
+            createdAt: new Date()
+          }))
+        );
+      } catch (error) {
+        console.error('Quest generation failed:', error);
+        // Continue without quests if generation fails
+      }
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        success: true,
+        journal: newJournal,
+        character: updatedCharacter,
+        quests: generatedQuests,
+        aiError: aiError ? aiError.message : null
+      });
+    } catch (error) {
+      if (client) {
+        await client.query('ROLLBACK');
+      }
+      console.error('Error processing journal entry:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to process journal entry',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
       
       // Save the journal entry with analysis results
       const [newJournal] = await db.insert(journals).values({
         userId,
         content,
-        mood: analysis.mood,
-        tags: analysis.tags,
+        createdAt: new Date(),
+        mood: analysis.mood || 'neutral',
+        tags: Array.isArray(analysis.tags) ? analysis.tags : [],
         analysis: analysis,
-        characterProgression: analysis.characterProgression,
+        characterProgression: analysis.characterProgression || {}
+      }).returning();
+
+      // Update character progress within the same transaction
+      const character = await updateCharacterProgress(userId, analysis, client);
+      
+      // Generate quests based on the analysis and character stats
+      let quests: Quest[] = [];
+      try {
+        quests = await generateQuestsWithRetry(analysis, character.stats);
+        
+        // Insert new quests
+        await db.insert(quests).values(
+          quests.map(quest => ({
+            userId,
+            title: quest.title,
+            description: quest.description,
+            category: quest.category,
+            difficulty: quest.difficulty,
+            xpReward: quest.xpReward || 50,
+            statRewards: quest.statRewards || {},
+            timeframe: quest.timeframe,
+            status: 'active',
+            createdAt: new Date()
+          }))
+        );
+      } catch (error) {
+        console.error('Quest generation failed:', error);
+        // Continue without quests if generation fails
+      }
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        success: true,
+        journal: newJournal,
+        character: character,
+        quests: quests,
+        aiError: aiError ? aiError.message : null
+      });
+        characterProgression: analysis.characterProgression || {}
+      }).returning();
+      
+      // Update character progress within the same transaction
+      const updatedCharacter = await updateCharacterProgress(userId, analysis, client);
+      
+      // Generate quests based on the analysis and character stats
+      let generatedQuests: Quest[] = [];
+      try {
+        generatedQuests = await generateQuestsWithRetry(analysis, updatedCharacter.stats);
+        if (generatedQuests.length > 0) {
+          await db.insert(quests).values(
+            generatedQuests.map(quest => ({
+              ...quest,
+              userId,
+              createdAt: currentDate,
+              status: 'active'
+            }))
+          );
+        }
+      } catch (error) {
+        console.error('Quest generation failed:', error);
+        // Continue without quests if generation fails
+      }
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        success: true,
+        journal: newJournal,
+        character: updatedCharacter,
+        quests: generatedQuests,
+        aiError: aiError ? String(aiError) : null
+      });
+        mood: analysis.mood || 'neutral',
+        tags: Array.isArray(analysis.tags) ? analysis.tags : [],
+        analysis: analysis,
+        characterProgression: analysis.characterProgression || {}
+      }).returning();
+      
+      // Update character progress within the same transaction
+      const updatedCharacter = await updateCharacterProgress(userId, analysis, client);
+      
+      // Generate quests based on the analysis and character stats
+      let generatedQuests: Quest[] = [];
+      try {
+        generatedQuests = await generateQuestsWithRetry(analysis, updatedCharacter.stats);
+        if (generatedQuests.length > 0) {
+          await db.insert(quests).values(
+            generatedQuests.map(quest => ({
+              ...quest,
+              userId,
+              createdAt: currentDate,
+              status: 'active'
+            }))
+          );
+        }
+      } catch (error) {
+        console.error('Quest generation failed:', error);
+        // Continue without quests if generation fails
+      }
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        success: true,
+        journal: newJournal,
+        character: updatedCharacter,
+        quests: generatedQuests,
+        aiError: aiError ? String(aiError) : null
+      });
+        mood: analysis.mood || 'neutral',
+        tags: Array.isArray(analysis.tags) ? analysis.tags : [],
+        analysis: analysis,
+        characterProgression: analysis.characterProgression || {}
+      }).returning();
+
+      let updatedCharacter = null;
+      let quests: Quest[] = [];
+
+      // Try to update character progression and generate quests
+      try {
+        // Update character progression
+        updatedCharacter = await updateCharacterProgress(userId, analysis, client);
+        
+        if (!aiError && updatedCharacter) {
+          // Generate quests based on updated character stats
+          quests = await generateQuestsWithRetry(analysis, updatedCharacter.stats);
+          
+          if (quests && quests.length > 0) {
+            // Format quests with proper dates and metadata
+            const questsToInsert = quests.map(quest => ({
+              userId,
+              title: quest.title,
+              description: quest.description,
+              category: quest.category,
+              difficulty: quest.difficulty || 1,
+              xpReward: quest.xpReward || 50,
+              statRewards: quest.statRewards || {},
+              status: 'active' as const,
+              createdAt: currentDate,
+              completedAt: null
+            }));
+
+            // Insert quests with proper error handling
+            await db.insert(quests).values(questsToInsert).execute();
+            console.log(`Generated ${quests.length} quests for user: ${userId}`);
+          }
+        }
+
+        // Commit transaction
+        await client.query('COMMIT');
+
+        // Return success response with all updated data
+        res.json({
+          success: true,
+          journal: newJournal,
+          character: updatedCharacter,
+          quests: quests
+        });
+
+      } catch (error) {
+        // Rollback transaction on error
+        await client.query('ROLLBACK');
+        console.error('Error in character progression or quest generation:', error);
+        res.status(500).json({
+          success: false,
+          message: error instanceof Error ? error.message : 'Failed to process journal entry'
+        });
+      } finally {
+        // Release the client back to the pool
+        client.release();
+      }
+        tags: Array.isArray(analysis.tags) ? analysis.tags : [],
+        analysis: analysis,
+        characterProgression: analysis.characterProgression || {},
       }).returning();
 
       let updatedCharacter = null;
@@ -480,20 +1028,51 @@ export function registerRoutes(app: Express) {
       try {
         updatedCharacter = await updateCharacterProgress(userId, analysis, client);
         
-        if (!aiError) { // Only try to generate quests if AI analysis succeeded
-          const character = user.character as any;
-          quests = await generateQuestsWithRetry(analysis, character.stats);
+        if (!aiError && updatedCharacter) {
+          // Only generate quests if we have valid character stats
+          quests = await generateQuestsWithRetry(analysis, updatedCharacter.stats);
+          
           if (quests && quests.length > 0) {
+            // Format quests with proper dates and metadata
+            const questsToInsert = quests.map(quest => ({
+              userId,
+              title: quest.title,
+              description: quest.description,
+              category: quest.category,
+              difficulty: quest.difficulty || 1,
+              xpReward: quest.xpReward || 50,
+              statRewards: quest.statRewards || {},
+              status: 'active',
+              createdAt: currentDate,
+              completedAt: null
+            }));
+
+            // Insert quests with proper error handling
+            await db.insert(quests).values(questsToInsert).execute();
+          }
+        }
+          if (quests && quests.length > 0) {
+            // Prepare quests with proper metadata and dates
+            const questsToInsert = quests.map(quest => ({
+              ...quest,
+              userId,
+              createdAt: new Date().toISOString(),
+              completedAt: null,
+              status: 'active'
+            }));
             
-            await db.insert(quests).values(
-              quests.map(quest => ({
-                userId,
-                ...quest,
-                status: 'active'
-              }))
-            );
+            await db.insert(quests).values(questsToInsert).execute();
             console.log(`Generated ${quests.length} quests for user: ${userId}`);
           }
+          
+          // Commit transaction
+          await client.query('COMMIT');
+          
+          return res.status(200).json({
+            journal: newJournal,
+            character: updatedCharacter,
+            quests: quests
+          });
         }
       } catch (error) {
         console.error('Error in character progression or quest generation:', error);
@@ -587,10 +1166,11 @@ export function registerRoutes(app: Express) {
         rewards.xpGained = Math.round(rewards.xpGained * levelScaling * difficultyMultiplier);
         
         // Scale stat updates based on character level and quest difficulty with caps
-        Object.entries(rewards.statUpdates).forEach(([stat, value]) => {
+        const statUpdates = rewards.statUpdates as Record<string, number>;
+        Object.entries(statUpdates).forEach(([stat, value]) => {
           const statBonus = value * (1 + (character.level * XP_CONFIG.STAT_BONUS_SCALING));
           const boundedValue = Math.max(-1, Math.min(1, statBonus * difficultyMultiplier));
-          rewards.statUpdates[stat] = boundedValue;
+          statUpdates[stat] = boundedValue;
         });
         
       } catch (error) {
@@ -612,8 +1192,7 @@ export function registerRoutes(app: Express) {
           completedAt: new Date()
         })
         .where(and(
-          eq(quests.id, questId),
-          eq(quests.userId, userId)
+          eq(users.id, userId)
         ));
 
       // Update character with rewards
