@@ -359,36 +359,118 @@ function analyzeContent(content: string): {
   };
 } {
   const text = content.toLowerCase();
+  const words = text.split(/\s+/);
+  const sentences = content.split(/[.!?]+/).filter(Boolean);
+  
+  // Enhanced tag generation with context awareness
   const tags = generateTags(content);
   
-  // Simple sentiment analysis
-  const positiveWords = ['happy', 'great', 'awesome', 'good', 'excellent', 'proud', 'achieved'];
-  const negativeWords = ['sad', 'bad', 'difficult', 'hard', 'frustrated', 'worried', 'failed'];
-  
-  const positiveCount = positiveWords.filter(word => text.includes(word)).length;
-  const negativeCount = negativeWords.filter(word => text.includes(word)).length;
-  
-  const mood = positiveCount > negativeCount ? 'positive' : 
-               negativeCount > positiveCount ? 'negative' : 'neutral';
-  
-  // Calculate stat changes based on content analysis
-  const statChanges = {
-    wellness: text.includes('health') || text.includes('exercise') || text.includes('sleep') ? 0.2 : 0,
-    social: text.includes('friend') || text.includes('family') || text.includes('people') ? 0.2 : 0,
-    growth: text.includes('learn') || text.includes('read') || text.includes('study') ? 0.2 : 0,
-    achievement: text.includes('complete') || text.includes('finish') || text.includes('accomplish') ? 0.2 : 0
+  // Improved sentiment analysis with intensity scoring
+  const moodKeywords = {
+    positive: ['happy', 'great', 'awesome', 'good', 'excellent', 'proud', 'achieved', 'excited', 'inspired'],
+    negative: ['sad', 'bad', 'difficult', 'hard', 'frustrated', 'worried', 'failed', 'anxious', 'overwhelmed'],
+    neutral: ['okay', 'fine', 'normal', 'regular', 'usual']
   };
   
-  return { 
-    mood, 
-    tags, 
-    growthAreas: [], 
-    statChanges,
-    characterProgression: {
-      insights: [],
-      skillsImproved: [],
-      relationships: []
+  const moodScores = {
+    positive: 0,
+    negative: 0,
+    neutral: 0
+  };
+  
+  // Calculate mood scores with intensity and context
+  words.forEach((word, index) => {
+    const prevWord = index > 0 ? words[index - 1] : '';
+    const intensifiers = ['very', 'really', 'extremely', 'incredibly'];
+    const multiplier = intensifiers.includes(prevWord) ? 1.5 : 1;
+    
+    Object.entries(moodKeywords).forEach(([mood, keywords]) => {
+      if (keywords.includes(word)) {
+        moodScores[mood as keyof typeof moodScores] += multiplier;
+      }
+    });
+  });
+  // Calculate progressive stat changes based on context and patterns
+  Object.entries(statContexts).forEach(([stat, keywords]) => {
+    let statScore = 0;
+    
+    // Analyze each sentence for context
+    sentences.forEach(sentence => {
+      const sentenceL = sentence.toLowerCase();
+      const keywordMatches = keywords.filter(word => sentenceL.includes(word));
+      
+      if (keywordMatches.length > 0) {
+        // Base score from keyword matches
+        const baseScore = keywordMatches.length * 0.1;
+        
+        // Context multipliers
+        const hasDetail = sentence.length > 50 ? 1.2 : 1;
+        const hasQuantifier = /\d+/.test(sentence) ? 1.3 : 1;
+        const hasProgress = /(progress|improve|better|growth)/i.test(sentence) ? 1.2 : 1;
+        
+        statScore += baseScore * hasDetail * hasQuantifier * hasProgress;
+      }
+    });
+    
+    // Apply diminishing returns and normalize
+    statChanges[stat] = Math.min(0.5, Math.log1p(statScore) * 0.2);
+  });
+  
+  // Extract growth areas and progression insights
+  const growthAreas = Object.entries(statChanges)
+    .filter(([_, value]) => value > 0.2)
+    .map(([stat]) => stat);
+
+  const characterProgression = {
+    insights: sentences
+      .filter(sentence => 
+        /\b(realize|understand|learn|discover|insight)\b/i.test(sentence) &&
+        sentence.length > 30
+      ),
+    skillsImproved: Object.entries(statContexts)
+      .filter(([stat]) => statChanges[stat] > 0.3)
+      .map(([stat]) => `Improved ${stat} through focused activities`),
+    relationships: []
+  };
+
+  // Calculate final sentiment intensity for progression impact
+  const sentimentIntensity = Math.max(...Object.values(moodScores)) / 5; // Normalize to 0-1 range
+  
+  // Apply sentiment multiplier to stat changes
+  Object.keys(statChanges).forEach(stat => {
+    const baseChange = statChanges[stat];
+    const sentimentMultiplier = 1 + (sentimentIntensity * 0.5); // Max 50% boost from sentiment
+    statChanges[stat] = Math.min(1.0, baseChange * sentimentMultiplier);
+  });
+
+  // Enhanced progression tracking with comprehensive context
+  const enhancedCharacterProgression = {
+    ...characterProgression,
+    progressionContext: {
+      sentimentIntensity,
+      keywordMatches: Object.fromEntries(
+        Object.entries(statContexts).map(([stat, keywords]) => [
+          stat,
+          keywords.filter(word => content.toLowerCase().includes(word)).length
+        ])
+      ),
+      detailedAnalysis: sentences
+        .filter(s => s.length > 30)
+        .map(s => ({
+          content: s,
+          hasQuantifier: /\d+/.test(s),
+          hasProgress: /(progress|improve|better|growth)/i.test(s)
+        }))
     }
+  };
+
+  // Return the final analysis results with enhanced progression tracking
+  return {
+    mood,
+    tags,
+    growthAreas,
+    statChanges,
+    characterProgression: enhancedCharacterProgression
   };
 }
 

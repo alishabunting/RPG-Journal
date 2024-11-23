@@ -59,6 +59,18 @@ class OpenAIError extends Error {
   }
 }
 
+function getEmotionalIntensity(mood: string): number {
+  const intensityMap: Record<string, number> = {
+    'very positive': 1.0,
+    'positive': 0.7,
+    'neutral': 0.3,
+    'negative': 0.5,
+    'very negative': 0.8
+  };
+  
+  return intensityMap[mood.toLowerCase()] || 0.3;
+}
+
 async function withRetry<T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
@@ -117,22 +129,45 @@ export async function analyzeEntry(content: string): Promise<JournalAnalysis> {
         messages: [
           {
             role: "system",
-            content: `You are an RPG Game Master analyzing journal entries to track character progression and generate quests. 
-                     Focus on personal growth, achievements, and relationships from an RPG perspective.
-                     Identify opportunities for character development and quest generation.
-                     Consider emotional state, challenges faced, and growth opportunities.
-                     Think about how real-life experiences can be gamified into meaningful quests.
-                     Return a JSON formatted response.`
+            content: `You are an advanced RPG Game Master analyzing journal entries for character progression.
+                     Key Analysis Points:
+                     1. Emotional Intelligence:
+                        - Identify emotional patterns and self-awareness
+                        - Track emotional growth and resilience
+                        - Assess emotional impact on different stats
+                     2. Achievement Recognition:
+                        - Identify concrete accomplishments
+                        - Measure progress towards goals
+                        - Recognize small wins and milestone achievements
+                     3. Skill Development:
+                        - Track recurring activities and their impact on stats
+                        - Identify emerging patterns of expertise
+                        - Note skill synergies and combinations
+                     4. Challenge Analysis:
+                        - Assess difficulty of overcome obstacles
+                        - Identify growth opportunities from setbacks
+                        - Measure progressive challenge engagement
+                     5. Relationship Dynamics:
+                        - Track social interactions and their quality
+                        - Identify relationship building patterns
+                        - Assess leadership and influence moments
+                     6. Personal Growth:
+                        - Identify moments of insight and learning
+                        - Track habit formation and consistency
+                        - Measure progress in different life areas
+                     
+                     Return a detailed JSON analysis focusing on progressive stat development 
+                     and meaningful character growth opportunities.`
           },
           {
             role: "user",
-            content: `Analyze this journal entry and provide an RPG-style assessment in JSON format:
+            content: `Analyze this journal entry with focus on progressive character development:
             
             ${content}`
           }
         ],
         temperature: 0.7,
-        max_tokens: 800,
+        max_tokens: 1000,
         response_format: { type: "json_object" }
       })
     );

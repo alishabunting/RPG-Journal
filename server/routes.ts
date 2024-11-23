@@ -113,42 +113,81 @@ function calculateStatWeights(analysis: Analysis, level: number): StatWeights {
     charisma: 1
   };
 
-  // Analyze content sentiment and context
+  // Enhanced content analysis with context awareness
   const sentiment = analysis.mood || 'neutral';
   const content = analysis.content?.toLowerCase() || '';
   const tags = analysis.tags || [];
+  const insights = analysis.characterProgression?.insights || [];
+  const skillsImproved = analysis.characterProgression?.skillsImproved || [];
 
-  // Calculate stat weights based on content analysis
+  // Advanced keyword matching with contextual relevance
   Object.entries(STAT_KEYWORDS).forEach(([stat, keywords]) => {
-    const statMatches = keywords.filter(keyword => 
-      content.includes(keyword) || 
-      tags.some(tag => tag.toLowerCase().includes(keyword))
+    // Count direct keyword matches
+    const directMatches = keywords.filter(keyword => 
+      content.includes(keyword)
     ).length;
     
-    if (statMatches > 0) {
-      baseWeights[stat as keyof StatWeights] *= (1 + (statMatches * 0.1));
+    // Count tag-based matches with higher weight
+    const tagMatches = keywords.filter(keyword =>
+      tags.some(tag => tag.toLowerCase().includes(keyword))
+    ).length * 1.5;
+    
+    // Calculate contextual relevance score
+    const contextScore = (directMatches + tagMatches) / keywords.length;
+    
+    if (contextScore > 0) {
+      // Apply progressive scaling based on match quality
+      baseWeights[stat as keyof StatWeights] *= (1 + (contextScore * 0.15));
     }
   });
 
-  // Adjust weights based on sentiment and character progression
-  if (sentiment === 'positive') {
-    baseWeights.charisma *= 1.1;
-    baseWeights.wisdom *= 1.1;
-  } else if (sentiment === 'negative') {
-    baseWeights.constitution *= 1.1;
-    baseWeights.wisdom *= 1.05;
-  }
+  // Enhanced emotional intelligence system
+  const emotionalImpact = {
+    'very positive': { charisma: 0.15, wisdom: 0.12, constitution: 0.08 },
+    'positive': { charisma: 0.1, wisdom: 0.08, constitution: 0.05 },
+    'neutral': { wisdom: 0.05, intelligence: 0.05 },
+    'negative': { constitution: 0.12, wisdom: 0.1, strength: 0.08 },
+    'very negative': { constitution: 0.15, wisdom: 0.12, strength: 0.1 }
+  };
 
-  // AI-driven insight bonuses
-  if (analysis.characterProgression?.insights?.length) {
-    baseWeights.intelligence *= 1.1;
-    baseWeights.wisdom *= 1.1;
-  }
-
-  // Scale weights with level for more significant growth at higher levels
-  Object.keys(baseWeights).forEach(key => {
-    baseWeights[key] *= (1 + (level * 0.02));
+  // Apply emotional impacts with more granular control
+  const moodEffects = emotionalImpact[sentiment as keyof typeof emotionalImpact] || emotionalImpact.neutral;
+  Object.entries(moodEffects).forEach(([stat, bonus]) => {
+    baseWeights[stat as keyof StatWeights] *= (1 + bonus);
   });
+
+  // Enhanced progression system based on character insights
+  insights.forEach(insight => {
+    // Increase intelligence and wisdom based on meaningful insights
+    baseWeights.intelligence *= 1.08;
+    baseWeights.wisdom *= 1.06;
+  });
+
+  // Skill improvement tracking
+  skillsImproved.forEach(skill => {
+    // Reward consistent skill development
+    const relatedStats = Object.entries(STAT_KEYWORDS)
+      .filter(([_, keywords]) => keywords.some(k => skill.toLowerCase().includes(k)))
+      .map(([stat]) => stat);
+    
+    relatedStats.forEach(stat => {
+      baseWeights[stat as keyof StatWeights] *= 1.05;
+    });
+  });
+
+  // Progressive level scaling with diminishing returns
+  const levelScaling = 1 + (Math.log(level + 1) * 0.05);
+  Object.keys(baseWeights).forEach(key => {
+    baseWeights[key] *= levelScaling;
+  });
+
+  // Normalize weights to prevent extreme values
+  const maxWeight = Math.max(...Object.values(baseWeights));
+  if (maxWeight > 2) {
+    Object.keys(baseWeights).forEach(key => {
+      baseWeights[key] = baseWeights[key] / maxWeight * 2;
+    });
+  }
 
   return baseWeights;
 }
@@ -334,11 +373,12 @@ function filterQuestsByStats(quests: Quest[], characterStats: StatWeights): Ques
     }));
 }
     // Enhanced quest generation with retry logic and stat-based filtering
-async function generateQuestsWithRetry(analysis: any, characterStats: StatWeights, maxRetries = 3): Promise<Quest[]> {
+async function generateQuestsWithRetry(analysis: Analysis, characterStats: StatWeights, maxRetries = 3): Promise<Quest[]> {
   let lastError: Error | null = null;
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
+      // Generate quests using OpenAI
       const generatedQuests = await generateQuests(analysis);
       
       // Apply stat-based filtering and scoring
@@ -346,11 +386,12 @@ async function generateQuestsWithRetry(analysis: any, characterStats: StatWeight
       
       // Take top 3-5 most suitable quests
       return filteredQuests.slice(0, Math.min(5, filteredQuests.length));
-    } catch (error: any) {
+    } catch (error) {
       console.error(`Quest generation attempt ${attempt + 1} failed:`, error);
-      lastError = error;
+      lastError = error instanceof Error ? error : new Error(String(error));
       
       if (attempt < maxRetries - 1) {
+        // Exponential backoff for retries
         const delay = Math.pow(2, attempt) * 1000;
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
@@ -363,17 +404,146 @@ async function generateQuestsWithRetry(analysis: any, characterStats: StatWeight
 }
 
 export function registerRoutes(app: Express) {
-  // Enhanced journal entry processing with proper date handling
-  async function processJournalEntry(userId: number, content: string, client: PoolClient) {
-    const db = drizzle(client, { schema: { users, journals, quests } });
-    
-    // Get user data first to ensure it exists
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, userId)
-    });
+  // Character update endpoint with enhanced stat progression
+  app.put("/api/journal", ensureAuthenticated, async (req, res) => {
+    const userId = (req.user as User).id;
+    let client;
 
-    if (!user) {
-      throw new Error('User not found');
+    try {
+      client = await pool.connect();
+      const result = await processJournalEntry(userId, req.body.content, client);
+      res.json(result);
+    } catch (error) {
+      console.error('Error processing journal entry:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Internal server error',
+        error: process.env.NODE_ENV === 'development' ? error : undefined
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  });
+
+  // Enhanced journal entry processing with proper date handling
+  async function processJournalEntry(userId: number, content: string, client: PoolClient): Promise<{
+    journal: any;
+    character: Character;
+    quests: Quest[];
+  }> {
+    try {
+      const db = drizzle(client, { schema: { users, journals, quests } });
+      
+      // Get user data first to ensure it exists
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, userId)
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      let analysis = null;
+      let aiError = null;
+      
+      try {
+        analysis = await analyzeEntry(content);
+      } catch (error) {
+        console.error('AI analysis failed:', error);
+        aiError = error;
+        analysis = {
+          mood: "neutral",
+          tags: [],
+          growthAreas: [],
+          statChanges: {
+            wellness: 0,
+            social: 0,
+            growth: 0,
+            achievement: 0
+          },
+          characterProgression: {
+            insights: [],
+            skillsImproved: [],
+            relationships: []
+          }
+        };
+      }
+
+      // Save the journal entry
+      const [newJournal] = await db.insert(journals).values({
+        userId,
+        content,
+        createdAt: new Date(),
+        mood: analysis.mood || 'neutral',
+        tags: Array.isArray(analysis.tags) ? analysis.tags : [],
+        analysis,
+        characterProgression: analysis.characterProgression || {}
+      }).returning();
+
+      // Update character progress with enhanced content-based progression
+      const character = await updateCharacterProgress(userId, analysis, client);
+      
+      // Generate quests with improved stat-based filtering
+      const quests = await generateQuestsWithRetry(analysis, character.stats);
+      
+      // Save generated quests with enhanced metadata
+      if (quests.length > 0) {
+        await db.insert(quests).values(
+          quests.map(quest => ({
+            userId,
+            ...quest,
+            status: 'active',
+            createdAt: new Date(),
+            metadata: {
+              ...quest.metadata,
+              contentAnalysis: {
+                matchedTags: analysis.tags || [],
+                growthAreas: analysis.growthAreas || [],
+                sentimentImpact: analysis.mood || 'neutral'
+              }
+            }
+          }))
+        ).execute();
+      }
+
+      return {
+        journal: newJournal,
+        character,
+        quests
+      };
+      
+      // Generate quests with improved stat-based filtering
+      let quests: Quest[] = [];
+      try {
+        quests = await generateQuestsWithRetry(analysis, character.stats);
+        
+        // Save generated quests
+        if (quests.length > 0) {
+          await db.insert(quests).values(
+            quests.map(quest => ({
+              userId,
+              ...quest,
+              status: 'active',
+              createdAt: new Date()
+            }))
+          ).execute();
+        }
+      } catch (questError) {
+        console.error('Error generating quests:', questError);
+        // Continue with empty quests array if quest generation fails
+      }
+
+      return {
+        journal: newJournal,
+        character,
+        quests
+      };
+    } catch (error) {
+      console.error('Error processing journal entry:', error);
+      throw error;
+    }
+  }
     }
 
     let analysis = null;
@@ -452,6 +622,84 @@ export function registerRoutes(app: Express) {
     };
   }
 
+  // Quest completion endpoint with enhanced stat updates
+  app.post("/api/quest/:questId/complete", ensureAuthenticated, async (req, res) => {
+    const userId = (req.user as User).id;
+    const questId = parseInt(req.params.questId);
+    let client;
+
+    try {
+      client = await pool.connect();
+      const db = drizzle(client, { schema: { users, journals, quests } });
+      
+      // Get user's current stats
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, userId)
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Calculate completion rewards based on current stats
+      const rewards = await calculateQuestCompletion(questId, user.character.stats);
+
+      // Update character stats and XP
+      const character = user.character as Character;
+      character.xp += rewards.xpGained;
+
+      // Apply stat updates with progressive scaling
+      Object.entries(rewards.statUpdates).forEach(([stat, change]) => {
+        if (stat in character.stats) {
+          const currentValue = character.stats[stat as keyof StatWeights];
+          const scaledChange = change * (1 + Math.log(character.level) * 0.1);
+          character.stats[stat as keyof StatWeights] = Math.min(
+            XP_CONFIG.MAX_STAT_VALUE,
+            currentValue + scaledChange
+          );
+        }
+      });
+
+      // Add achievements
+      character.achievements.push(
+        ...rewards.achievements.map(achievement => ({
+          title: achievement,
+          timestamp: new Date().toISOString()
+        }))
+      );
+
+      // Update character in database
+      await db.update(users)
+        .set({ character })
+        .where(eq(users.id, userId))
+        .execute();
+
+      // Mark quest as completed
+      await db.update(quests)
+        .set({ 
+          status: 'completed',
+          completedAt: new Date()
+        })
+        .where(eq(quests.id, questId))
+        .execute();
+
+      res.json({
+        rewards,
+        character
+      });
+    } catch (error) {
+      console.error('Error completing quest:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Internal server error',
+        error: process.env.NODE_ENV === 'development' ? error : undefined
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  });
+
   // Add connection status endpoint at the top
   app.get("/api/db/status", async (req, res) => {
     try {
@@ -504,9 +752,48 @@ export function registerRoutes(app: Express) {
   app.put("/api/character", ensureAuthenticated, async (req, res) => {
     const userId = (req.user as User).id;
     let client;
+
+    try {
+      client = await pool.connect();
+      const result = await processJournalEntry(userId, req.body.content, client);
+      
+      const emotionalIntensity = getEmotionalIntensity(result.journal.mood || 'neutral');
+      result.character.stats = Object.fromEntries(
+        Object.entries(result.character.stats).map(([stat, value]) => [
+          stat,
+          Math.min(XP_CONFIG.MAX_STAT_VALUE, 
+            value + (result.character.statChanges?.[stat] || 0) * emotionalIntensity
+          )
+        ])
+      );
+      
+      res.json(result);
     } catch (error) {
+      console.error('Error processing character update:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Internal server error',
+        error: process.env.NODE_ENV === 'development' ? error : undefined
+      });
+    } finally {
       if (client) {
-        await client.query('ROLLBACK');
+        client.release();
+      }
+    }
+  });
+      const result = await processJournalEntry(userId, req.body.content, client);
+      res.json(result);
+    } catch (error) {
+      console.error('Error processing character update:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Internal server error',
+        error: process.env.NODE_ENV === 'development' ? error : undefined
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  });
       }
       console.error('Error updating character:', error);
       res.status(500).json({ 
