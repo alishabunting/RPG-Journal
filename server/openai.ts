@@ -9,7 +9,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-interface JournalAnalysis {
+export interface JournalAnalysis {
   mood: string;
   tags: string[];
   growthAreas: string[];

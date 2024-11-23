@@ -43,6 +43,8 @@ export interface Quest {
   category: string;
   status: 'active' | 'completed';
   userId: number;
+  xpReward: number;
+  timeframe?: string;
   createdAt?: Date;
   completedAt?: Date | null;
   statRequirements?: Partial<StatWeights>;
