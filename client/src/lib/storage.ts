@@ -6,6 +6,15 @@ const STORAGE_KEYS = {
   CHARACTER: 'rpg-journal:character'
 } as const;
 
+// Stat contexts for content analysis
+const statContexts = {
+  strength: ['exercise', 'physical', 'strength', 'power', 'lifting', 'sports'],
+  dexterity: ['agility', 'balance', 'coordination', 'reflex', 'speed', 'craft'],
+  constitution: ['health', 'endurance', 'stamina', 'wellness', 'resilience'],
+  intelligence: ['study', 'learn', 'research', 'analysis', 'problem-solving'],
+  wisdom: ['reflection', 'meditation', 'insight', 'awareness', 'mindfulness'],
+  charisma: ['social', 'leadership', 'communication', 'persuasion', 'empathy']
+};
 // Default character stats
 const DEFAULT_CHARACTER = {
   name: 'Adventurer',
@@ -173,7 +182,11 @@ export type Quest = {
   description: string;
   category: string;
   status: 'active' | 'completed';
-  difficulty?: number;
+  difficulty: number;
+  xpReward: number;
+  storylineId?: string;
+  previousQuestId?: number;
+  nextQuestId?: number;
   statRequirements?: {
     strength?: number;
     dexterity?: number;
@@ -195,7 +208,10 @@ export type Quest = {
     growthPotential: number;
     balance: number;
     recommended: boolean;
+    storylineProgress?: number;
   };
+  createdAt: string;
+  completedAt?: string;
 };
 
 // Helper functions
@@ -361,6 +377,34 @@ function analyzeContent(content: string): {
   const text = content.toLowerCase();
   const words = text.split(/\s+/);
   const sentences = content.split(/[.!?]+/).filter(Boolean);
+  // Initialize stat changes object
+  const statChanges: Record<string, number> = {};
+  
+  // Calculate progressive stat changes based on context and patterns
+  Object.entries(statContexts).forEach(([stat, keywords]) => {
+    let statScore = 0;
+    
+    // Analyze each sentence for context
+    sentences.forEach(sentence => {
+      const sentenceL = sentence.toLowerCase();
+      const keywordMatches = keywords.filter(word => sentenceL.includes(word));
+      
+      if (keywordMatches.length > 0) {
+        // Base score from keyword matches
+        const baseScore = keywordMatches.length * 0.1;
+        
+        // Context multipliers
+        const hasDetail = sentence.length > 50 ? 1.2 : 1;
+        const hasQuantifier = /\d+/.test(sentence) ? 1.3 : 1;
+        const hasProgress = /(progress|improve|better|growth)/i.test(sentence) ? 1.2 : 1;
+        
+        statScore += baseScore * hasDetail * hasQuantifier * hasProgress;
+      }
+    });
+    
+    // Apply diminishing returns and normalize
+    statChanges[stat] = Math.min(0.5, Math.log1p(statScore) * 0.2);
+  });
   
   // Enhanced tag generation with context awareness
   const tags = generateTags(content);
@@ -509,6 +553,8 @@ function generateQuestsFromAnalysis(analysis: ReturnType<typeof analyzeContent>)
           category,
           status: 'active' as const,
           difficulty: template.difficulty,
+          xpReward: template.difficulty * 50,
+          createdAt: new Date().toISOString(),
           statRequirements: template.statRequirements,
           statRewards: template.statRewards,
           metadata: {

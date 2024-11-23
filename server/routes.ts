@@ -1,26 +1,19 @@
 import type { Express } from "express";
-import passport from "passport";
-import { getDb, pool, getPoolStatus } from "../db/index.js";
+import { getDb, pool } from "../db/index.js";
 import { users, journals, quests } from "../db/schema.js";
-import { eq, desc, and, sql } from "drizzle-orm";
-import { analyzeEntry, generateQuests, calculateQuestCompletion } from "./openai.js";
+import { eq } from "drizzle-orm";
+import { analyzeEntry, generateQuests } from "./openai.js";
 import { ensureAuthenticated } from "./auth.js";
-import type { User, Journal } from "../db/schema.js";
+import type { User } from "../db/schema.js";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import type { PoolClient } from "@neondatabase/serverless";
+import { processStorylines, isQuestAvailable } from "./utils/storylineProcessor.js";
 
 // Enhanced character progress update with validation and error handling
 // Helper functions for advanced RPG progression
 
-interface StatWeights {
-  strength: number;
-  dexterity: number;
-  constitution: number;
-  intelligence: number;
-  wisdom: number;
-  charisma: number;
-  [key: string]: number; // Allow indexing with strings
-}
+import type { StatWeights, Character, CharacterProgression } from './types/character';
+import type { Quest, QuestRewards, QuestChain } from './types/quest';
 
 // XP scaling configuration
 const XP_CONFIG = {
@@ -403,7 +396,12 @@ async function generateQuestsWithRetry(analysis: Analysis, characterStats: StatW
   throw lastError || new Error('Failed to generate quests after all retries');
 }
 
+import { registerQuestRoutes } from "./routes/quests.js";
+
 export function registerRoutes(app: Express) {
+  // Register modular quest routes
+  registerQuestRoutes(app);
+
   // Character update endpoint with enhanced stat progression
   app.put("/api/journal", ensureAuthenticated, async (req, res) => {
     const userId = (req.user as User).id;

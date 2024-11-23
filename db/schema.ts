@@ -32,7 +32,7 @@ export const journals = pgTable("journals", {
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
-export const quests = pgTable("quests", {
+export const quests: any = pgTable("quests", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   userId: integer("user_id").references(() => users.id).notNull(),
   title: text("title").notNull(),
@@ -40,9 +40,14 @@ export const quests = pgTable("quests", {
   category: text("category").notNull(),
   difficulty: integer("difficulty").notNull(),
   xpReward: integer("xp_reward").notNull(),
+  statRequirements: jsonb("stat_requirements"),
   statRewards: jsonb("stat_rewards"),
   timeframe: text("timeframe"),
   status: text("status").default("active").notNull(),
+  storylineId: text("storyline_id"),
+  previousQuestId: integer("previous_quest_id").references(() => quests.id),
+  nextQuestId: integer("next_quest_id").references(() => quests.id),
+  metadata: jsonb("metadata"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at")
 });
