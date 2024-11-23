@@ -8,7 +8,7 @@ import { registerRoutes } from "./routes.js";
 import { setupVite, serveStatic } from "./vite.js";
 import { createServer } from "http";
 import "./auth.js";
-import { db, checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db/index.js";
+import { checkConnection, getPoolStatus, pool, startHealthCheck, stopHealthCheck } from "../db/index.js";
 
 // Enhanced port configuration for Replit with external port mapping
 const PORT = 5000; // Force port 5000 for Replit
@@ -186,7 +186,10 @@ async function initializeSession() {
     `);
     
     const sessionStore = new PgSession({
-      pool,
+      pool: {
+        query: pool.query.bind(pool),
+        ...pool,
+      },
       tableName: 'session',
       pruneSessionInterval: 60
     });

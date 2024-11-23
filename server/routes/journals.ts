@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Router } from "express";
 import { getDb, pool } from "../../db/index.js";
 import { users, journals, quests } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
@@ -7,9 +7,11 @@ import { drizzle } from "drizzle-orm/neon-serverless";
 import { ensureAuthenticated } from "../auth.js";
 import { processJournalEntry } from "../utils/journalProcessor.js";
 
-export function registerJournalRoutes(app: Express) {
+import type { Request, Response } from "express";
+
+export function registerJournalRoutes(router: Router) {
   // Journal entry endpoint with character progression
-  app.post("/api/journals", ensureAuthenticated, async (req, res) => {
+  router.post("/journals", ensureAuthenticated, async (req: Request, res: Response) => {
     const userId = (req.user as User).id;
     const { content } = req.body;
     

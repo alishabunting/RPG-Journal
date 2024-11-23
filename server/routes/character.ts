@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Router } from "express";
 import { pool } from "../../db/index.js";
 import { ensureAuthenticated } from "../auth.js";
 import type { User } from "../../db/schema.js";
@@ -6,8 +6,10 @@ import { processJournalEntry } from "../utils/journalProcessor.js";
 import { getEmotionalIntensity } from "../utils/emotionProcessor.js";
 import { XP_CONFIG } from "../utils/progression.js";
 
-export function registerCharacterRoutes(app: Express) {
-  app.put("/api/character", ensureAuthenticated, async (req, res) => {
+import type { Request, Response } from "express";
+
+export function registerCharacterRoutes(router: Router) {
+  router.put("/character", ensureAuthenticated, async (req: Request, res: Response) => {
     const userId = (req.user as User).id;
     let client;
 

@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { Switch, Route } from "wouter";
 import "./index.css";
+import NotFound from "./components/NotFound";
 // Enhanced error handling and HMR configuration
 const MAX_RETRY_COUNT = 3;
 let retryCount = 0;
@@ -97,7 +98,7 @@ createRoot(root).render(
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/auth" component={Auth} />
-        <Route>404 - Quest Not Found</Route>
+        <Route component={NotFound} />
       </Switch>
       <Toaster />
     </StorageProvider>
