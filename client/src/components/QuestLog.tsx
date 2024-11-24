@@ -15,27 +15,6 @@ import type { Quest } from "../lib/storage";
 import { useStorage } from "../lib/storage-context";
 
 export function QuestLog() {
-  const { user } = useStorage();
-  const [quests, setQuests] = useState<Quest[]>(() => storage.getQuests());
-
-  const [completingQuest, setCompletingQuest] = useState<string | null>(null);
-  const [showReward, setShowReward] = useState(false);
-
-  const completeQuest = async (questId: string) => {
-    setCompletingQuest(questId);
-    setShowReward(true);
-    
-    const quest = quests.find(q => q.id === questId);
-    if (!quest) return;
-
-    // Animated completion sequence
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    // Update quest status
-    storage.completeQuest(questId);
-    
-    // Show reward animations
-    if (quest.statRewards) {
 // Enhanced storyline progress visualization
 const StorylineProgress = ({ progress }: { progress: number }) => (
   <motion.div className="relative w-full h-2 bg-purple-500/20 rounded-full overflow-hidden mt-2">
@@ -57,6 +36,27 @@ const StorylineProgress = ({ progress }: { progress: number }) => (
     />
   </motion.div>
 );
+  const { user } = useStorage();
+  const [quests, setQuests] = useState<Quest[]>(() => storage.getQuests());
+
+  const [completingQuest, setCompletingQuest] = useState<string | null>(null);
+  const [showReward, setShowReward] = useState(false);
+
+  const completeQuest = async (questId: string) => {
+    setCompletingQuest(questId);
+    setShowReward(true);
+    
+    const quest = quests.find(q => q.id === questId);
+    if (!quest) return;
+
+    // Animated completion sequence
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    // Update quest status
+    storage.completeQuest(questId);
+    
+    // Show reward animations
+    if (quest.statRewards) {
       // Let animations play out
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -120,9 +120,7 @@ const RewardAnimation = ({ reward, stat }: { reward: number; stat: string }) => 
           const progress = (characterStat / (requirement || 1)) * 100;
           
           return (
-            <motion.div 
-              key={stat} 
-              className="flex items-center text-xs gap-2"
+            <motion.div key={stat} className="flex items-center text-xs gap-2"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.3 }}
@@ -143,8 +141,8 @@ const RewardAnimation = ({ reward, stat }: { reward: number; stat: string }) => 
                       animate={{ 
                         width: '100%', 
                         opacity: [0, 1, 1, 0],
-                        transition: { duration: 0.8, times: [0, 0.2, 0.8, 1] }
                       }}
+                      transition={{ duration: 0.8, times: [0, 0.2, 0.8, 1] }}
                     />
                   )}
                 </motion.div>
@@ -155,13 +153,6 @@ const RewardAnimation = ({ reward, stat }: { reward: number; stat: string }) => 
                   transition={{ duration: 0.8, ease: "easeOut" }}
                 />
               </div>
-              <motion.span
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.3 }}
-              >
-                {characterStat}/{requirement}
-              </motion.span>
             </motion.div>
           );
         })}
@@ -214,52 +205,57 @@ const RewardAnimation = ({ reward, stat }: { reward: number; stat: string }) => 
                       quest.metadata?.recommended ? 'ring-2 ring-purple-500' : ''
                     }`}
                   >
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-4">
-                    <Checkbox
-                      checked={quest.status === "completed"}
-                      onCheckedChange={() => completeQuest(quest.id)}
-                    />
-                    <div className="flex-1">
-                      <motion.div 
-                        className="flex justify-between items-start"
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.4 }}
-                      >
-                        <h4 className="font-semibold">{quest.title}</h4>
-                        {quest.metadata?.recommended && (
-                          <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">
-                            Recommended
-                          </span>
-                        )}
+                    <CardContent className="p-4">
+                      <div className="flex items-start gap-4">
+                        <Checkbox
+                          checked={quest.status === "completed"}
+                          onCheckedChange={() => completeQuest(quest.id)}
+                        />
+                        <div className="flex-1">
+                          <motion.div
+                            className="flex justify-between items-start"
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.4 }}
+                          >
+                            <h4 className="font-semibold">{quest.title}</h4>
+                            {quest.metadata?.recommended && (
+                              <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">
+                                Recommended
+                              </span>
+                            )}
+                          </motion.div>
+                          <p className="text-sm text-gray-400">{quest.description}</p>
+                          <motion.div
+                            className="flex items-center gap-2 mt-1"
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.4 }}
+                          >
+                            <span className={`text-xs ${categoryColors[quest.category as keyof typeof categoryColors]}`}>
+                              {quest.category}
+                            </span>
+                            {quest.difficulty && (
+                              <span className="text-xs text-yellow-400">
+                                Difficulty: {quest.difficulty}
+                              </span>
+                            )}
+                          </motion.div>
+                          {renderStatRequirements(quest)}
+                          <div className="relative">
+                            {renderRewards(quest)}
+                            {quest.id === completingQuest && showReward && quest.statRewards && (
+                              <AnimatePresence>
+                                {Object.entries(quest.statRewards).map(([stat, reward], index) => (
+                                  <RewardAnimation key={`${quest.id}-${stat}`} reward={reward} stat={stat} />
+                                ))}
+                              </AnimatePresence>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-sm text-gray-400">{quest.description}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className={`text-xs ${categoryColors[quest.category as keyof typeof categoryColors]}`}>
-                          {quest.category}
-                        </span>
-                        {quest.difficulty && (
-                          <span className="text-xs text-yellow-400">
-                            Difficulty: {quest.difficulty}
-                          </span>
-                        )}
-                      </div>
-                      {renderStatRequirements(quest)}
-                      <div className="relative">
-                        {renderRewards(quest)}
-                        {quest.id === completingQuest && showReward && quest.statRewards && (
-                          <AnimatePresence>
-                            {Object.entries(quest.statRewards).map(([stat, reward], index) => (
-                              <RewardAnimation key={`${quest.id}-${stat}`} reward={reward} stat={stat} />
-                            ))}
-                          </AnimatePresence>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                    </CardContent>
+                  </Card>
                 </motion.div>
               ))}
             </AnimatePresence>
