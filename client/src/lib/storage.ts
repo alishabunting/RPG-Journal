@@ -204,11 +204,15 @@ export type Quest = {
     charisma?: number;
   };
   metadata?: {
-    achievability: number;
-    growthPotential: number;
-    balance: number;
-    recommended: boolean;
+    achievability?: number;
+    growthPotential?: number;
+    balance?: number;
+    recommended?: boolean;
     storylineProgress?: number;
+    animationState?: {
+      isCompleting?: boolean;
+      showReward?: boolean;
+    };
   };
   createdAt: string;
   completedAt?: string;

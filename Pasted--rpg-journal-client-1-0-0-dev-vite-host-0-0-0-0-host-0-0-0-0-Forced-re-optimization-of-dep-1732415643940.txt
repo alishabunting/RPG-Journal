@@ -1,0 +1,114 @@
+ rpg-journal-client@1.0.0 dev
+> vite --host 0.0.0.0 --host 0.0.0.0
+
+Forced re-optimization of dependencies
+
+  VITE v5.4.11  ready in 171 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://172.31.196.23:5173/
+  ➜  press h + enter to show help
+Error:   Failed to scan for dependencies from entries:
+  /home/runner/RPG-Journal-Gamer/client/index.html
+
+  ✘ [ERROR] Unexpected closing "div" tag does not match opening "motion.div" tag
+
+    src/components/QuestLog.tsx:236:24:
+      236 │                       </div>
+          │                         ~~~
+          ╵                         motion.div
+
+  The opening "motion.div" tag is here:
+
+    src/components/QuestLog.tsx:224:23:
+      224 │                       <motion.div 
+          ╵                        ~~~~~~~~~~
+
+
+    at failureErrorWithLog (/home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:1472:15)
+    at /home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:945:25
+    at runOnEndCallbacks (/home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:1315:45)
+    at buildResponseToResult (/home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:943:7)
+    at /home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:955:9
+    at new Promise (<anonymous>)
+    at requestCallbacks.on-end (/home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:954:54)
+    at handleRequest (/home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:647:17)
+    at handleIncomingPacket (/home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:672:7)
+    at Socket.readFromStdout (/home/runner/RPG-Journal-Gamer/node_modules/vite/node_modules/esbuild/lib/main.js:600:7)
+2:33:03 AM [vite] Pre-transform error: /home/runner/RPG-Journal-Gamer/client/src/components/QuestLog.tsx: Expected corresponding JSX closing tag for <motion.div>. (236:22)
+
+  234 |                           </span>
+  235 |                         )}
+> 236 |                       </div>
+      |                       ^
+  237 |                       <p className="text-sm text-gray-400">{quest.description}</p>
+  238 |                       <div className="flex items-center gap-2 mt-1">
+  239 |                         <span className={`text-xs ${categoryColors[quest.category as keyof typeof categoryColors]}`}>
+2:33:03 AM [vite] Internal server error: /home/runner/RPG-Journal-Gamer/client/src/components/QuestLog.tsx: Expected corresponding JSX closing tag for <motion.div>. (236:22)
+
+  234 |                           </span>
+  235 |                         )}
+> 236 |                       </div>
+      |                       ^
+  237 |                       <p className="text-sm text-gray-400">{quest.description}</p>
+  238 |                       <div className="flex items-center gap-2 mt-1">
+  239 |                         <span className={`text-xs ${categoryColors[quest.category as keyof typeof categoryColors]}`}>
+  Plugin: vite:react-babel
+  File: /home/runner/RPG-Journal-Gamer/client/src/components/QuestLog.tsx:236:22
+  234|                            </span>
+  235|                          )}
+  236|                        </div>
+     |                        ^
+  237|                        <p className="text-sm text-gray-400">{quest.description}</p>
+  238|                        <div className="flex items-center gap-2 mt-1">
+      at constructor (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:359:19)
+      at TypeScriptParserMixin.raise (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:3266:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6781:16)
+      at TypeScriptParserMixin.jsxParseElementAt (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6752:32)
+      at TypeScriptParserMixin.jsxParseElementAt (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6752:32)
+      at TypeScriptParserMixin.jsxParseElementAt (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6752:32)
+      at TypeScriptParserMixin.jsxParseElementAt (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6752:32)
+      at TypeScriptParserMixin.jsxParseElementAt (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6752:32)
+      at TypeScriptParserMixin.jsxParseElement (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6803:17)
+      at TypeScriptParserMixin.parseExprAtom (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6813:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10615:23)
+      at TypeScriptParserMixin.parseUpdate (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10600:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10580:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:9489:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10434:61)
+      at TypeScriptParserMixin.parseExprOps (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10439:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10416:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10379:21)
+      at /home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:9427:39
+      at TypeScriptParserMixin.tryParse (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:3604:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:9427:18)
+      at /home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10349:39
+      at TypeScriptParserMixin.allowInAnd (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:11951:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10349:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:11210:28)
+      at TypeScriptParserMixin.parseExprAtom (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10863:23)
+      at TypeScriptParserMixin.parseExprAtom (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6818:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10615:23)
+      at TypeScriptParserMixin.parseUpdate (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10600:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10580:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:9489:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10434:61)
+      at TypeScriptParserMixin.parseExprOps (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10439:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10416:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10379:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:9438:20)
+      at TypeScriptParserMixin.parseFunctionBody (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:11627:24)
+      at TypeScriptParserMixin.parseArrowExpression (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:11609:10)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:11222:12)
+      at TypeScriptParserMixin.parseExprAtom (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10863:23)
+      at TypeScriptParserMixin.parseExprAtom (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:6818:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10615:23)
+      at TypeScriptParserMixin.parseUpdate (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10600:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10580:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:9489:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10434:61)
+      at TypeScriptParserMixin.parseExprOps (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10439:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10416:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:10379:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/home/runner/RPG-Journal-Gamer/node_modules/@babel/parser/lib/index.js:9438:20)
+^C

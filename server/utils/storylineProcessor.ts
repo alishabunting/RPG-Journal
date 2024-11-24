@@ -1,5 +1,20 @@
 import type { Quest } from "../../db/schema.js";
 
+interface QuestMetadata {
+  difficulty: number;
+  statRequirements: Record<string, number>;
+  storylineProgress: number;
+  isAvailable: boolean;
+  achievability?: number;
+  growthPotential?: number;
+  balance?: number;
+  recommended?: boolean;
+  animationState?: {
+    isCompleting?: boolean;
+    showReward?: boolean;
+  };
+}
+
 interface StorylineNode {
   questId: number;
   nextQuests: number[];
@@ -8,12 +23,7 @@ interface StorylineNode {
     stats: Record<string, number>;
     previousQuests: number[];
   };
-  metadata: {
-    difficulty: number;
-    statRequirements: Record<string, number>;
-    storylineProgress: number;
-    isAvailable: boolean;
-  };
+  metadata: QuestMetadata;
 }
 
 interface QuestRequirement {
@@ -64,6 +74,7 @@ export function processStorylines(quests: Quest[]): Storyline[] {
     }
 
     // Create node for current quest
+    const questMetadata = quest.metadata || {};
     const node: StorylineNode = {
       questId: quest.id,
       nextQuests: [],
@@ -74,9 +85,17 @@ export function processStorylines(quests: Quest[]): Storyline[] {
       },
       metadata: {
         difficulty: quest.difficulty || 1,
-        statRequirements: quest.metadata?.statRequirements || {},
-        storylineProgress: 0,
-        isAvailable: true
+        statRequirements: {},
+        storylineProgress: questMetadata.storylineProgress || 0,
+        isAvailable: true,
+        achievability: questMetadata.achievability,
+        growthPotential: questMetadata.growthPotential,
+        balance: questMetadata.balance,
+        recommended: questMetadata.recommended,
+        animationState: questMetadata.animationState || {
+          isCompleting: false,
+          showReward: false
+        }
       }
     };
 

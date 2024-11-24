@@ -1,5 +1,6 @@
 import * as React from "react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Card,
   CardContent,
@@ -17,11 +18,72 @@ export function QuestLog() {
   const { user } = useStorage();
   const [quests, setQuests] = useState<Quest[]>(() => storage.getQuests());
 
+  const [completingQuest, setCompletingQuest] = useState<string | null>(null);
+  const [showReward, setShowReward] = useState(false);
+
   const completeQuest = async (questId: string) => {
+    setCompletingQuest(questId);
+    setShowReward(true);
+    
+    const quest = quests.find(q => q.id === questId);
+    if (!quest) return;
+
+    // Animated completion sequence
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    // Update quest status
     storage.completeQuest(questId);
+    
+    // Show reward animations
+    if (quest.statRewards) {
+// Enhanced storyline progress visualization
+const StorylineProgress = ({ progress }: { progress: number }) => (
+  <motion.div className="relative w-full h-2 bg-purple-500/20 rounded-full overflow-hidden mt-2">
+    <motion.div
+      className="absolute top-0 left-0 h-full bg-purple-500"
+      initial={{ width: 0 }}
+      animate={{ width: `${progress}%` }}
+      transition={{ duration: 0.8, ease: "easeOut" }}
+    />
+    <motion.div
+      className="absolute top-0 left-0 h-full bg-white/20"
+      initial={{ x: '-100%' }}
+      animate={{ x: '100%' }}
+      transition={{
+        duration: 1.5,
+        repeat: Infinity,
+        ease: "linear"
+      }}
+    />
+  </motion.div>
+);
+      // Let animations play out
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // Update quest list
     setQuests(storage.getQuests());
+    
+    // Reset states after all animations
+    setTimeout(() => {
+      setCompletingQuest(null);
+      setShowReward(false);
+    }, 1200);
   };
 
+const RewardAnimation = ({ reward, stat }: { reward: number; stat: string }) => (
+  <motion.div
+    className="absolute top-0 right-0 text-xs text-green-400"
+    initial={{ opacity: 0, y: 0 }}
+    animate={{
+      opacity: [0, 1, 1, 0],
+      y: -20,
+    }}
+    transition={{ duration: 1 }}
+  >
+    +{reward} {stat}
+  </motion.div>
+);
   const categoryColors = {
     Personal: "text-blue-400",
     Professional: "text-green-400",
@@ -55,18 +117,52 @@ export function QuestLog() {
         {Object.entries(quest.statRequirements).map(([stat, requirement]) => {
           const characterStat = characterStats[stat as keyof typeof characterStats] || 0;
           const meetsRequirement = characterStat >= (requirement || 0);
+          const progress = (characterStat / (requirement || 1)) * 100;
           
           return (
-            <div key={stat} className="flex items-center text-xs gap-2">
+            <motion.div 
+              key={stat} 
+              className="flex items-center text-xs gap-2"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.3 }}
+            >
               <span className={`capitalize ${meetsRequirement ? 'text-green-400' : 'text-red-400'}`}>
                 {stat}
               </span>
-              <Progress 
-                value={(characterStat / (requirement || 1)) * 100} 
-                className={`h-1 w-20 ${meetsRequirement ? 'bg-green-400' : 'bg-red-400'}`}
-              />
-              <span>{characterStat}/{requirement}</span>
-            </div>
+              <div className="relative w-20">
+                <motion.div className="relative w-full h-1">
+                  <Progress 
+                    value={progress} 
+                    className={`h-full ${meetsRequirement ? 'bg-green-400' : 'bg-red-400'}`}
+                  />
+                  {quest.id === completingQuest && (
+                    <motion.div
+                      className="absolute top-0 left-0 h-full bg-purple-500"
+                      initial={{ width: 0, opacity: 0 }}
+                      animate={{ 
+                        width: '100%', 
+                        opacity: [0, 1, 1, 0],
+                        transition: { duration: 0.8, times: [0, 0.2, 0.8, 1] }
+                      }}
+                    />
+                  )}
+                </motion.div>
+                <motion.div
+                  className="absolute top-0 left-0 h-1 bg-purple-500/30"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progress}%` }}
+                  transition={{ duration: 0.8, ease: "easeOut" }}
+                />
+              </div>
+              <motion.span
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.3 }}
+              >
+                {characterStat}/{requirement}
+              </motion.span>
+            </motion.div>
           );
         })}
       </div>
@@ -93,18 +189,31 @@ export function QuestLog() {
   return (
     <Card className="h-[400px] bg-black/30">
       <CardHeader>
-        <CardTitle>Quest Log</CardTitle>
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <CardTitle>Quest Log</CardTitle>
+        </motion.div>
       </CardHeader>
       <CardContent>
         <ScrollArea className="h-[320px] pr-4">
           <div className="space-y-4">
-            {quests?.filter(q => q.status === "active").map((quest) => (
-              <Card 
-                key={quest.id} 
-                className={`bg-black/20 border-purple-500/50 ${
-                  quest.metadata?.recommended ? 'ring-2 ring-purple-500' : ''
-                }`}
-              >
+            <AnimatePresence>
+              {quests?.filter(q => q.status === "active").map((quest) => (
+                <motion.div
+                  key={quest.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.4 }}
+                >
+                  <Card 
+                    className={`bg-black/20 border-purple-500/50 ${
+                      quest.metadata?.recommended ? 'ring-2 ring-purple-500' : ''
+                    }`}
+                  >
                 <CardContent className="p-4">
                   <div className="flex items-start gap-4">
                     <Checkbox
@@ -112,7 +221,12 @@ export function QuestLog() {
                       onCheckedChange={() => completeQuest(quest.id)}
                     />
                     <div className="flex-1">
-                      <div className="flex justify-between items-start">
+                      <motion.div 
+                        className="flex justify-between items-start"
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.4 }}
+                      >
                         <h4 className="font-semibold">{quest.title}</h4>
                         {quest.metadata?.recommended && (
                           <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">
@@ -132,12 +246,23 @@ export function QuestLog() {
                         )}
                       </div>
                       {renderStatRequirements(quest)}
-                      {renderRewards(quest)}
+                      <div className="relative">
+                        {renderRewards(quest)}
+                        {quest.id === completingQuest && showReward && quest.statRewards && (
+                          <AnimatePresence>
+                            {Object.entries(quest.statRewards).map(([stat, reward], index) => (
+                              <RewardAnimation key={`${quest.id}-${stat}`} reward={reward} stat={stat} />
+                            ))}
+                          </AnimatePresence>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </CardContent>
               </Card>
-            ))}
+                </motion.div>
+              ))}
+            </AnimatePresence>
           </div>
         </ScrollArea>
       </CardContent>

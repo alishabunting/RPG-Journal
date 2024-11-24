@@ -8,6 +8,8 @@ const MAX_RETRY_COUNT = 3;
 let retryCount = 0;
 let reconnectTimeout: number | null = null;
 
+declare module 'vite/client';
+
 if (import.meta.hot) {
   const handleConnectionError = (error: any) => {
     console.warn('HMR Connection error:', error);
