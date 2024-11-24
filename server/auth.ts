@@ -4,8 +4,10 @@ import { getDb } from "../db/index.js";
 import { users } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
+import type { IVerifyOptions, VerifyFunction } from 'passport-local';
+
 passport.use(
-  new LocalStrategy({ passwordField: 'none' }, async (username, _password, done) => {
+  new LocalStrategy({ passwordField: 'none' }, async (username: string, _password: string, done: (error: any, user?: any, options?: IVerifyOptions) => void) => {
     try {
       console.log(`Authentication attempt for username: ${username}`);
       
@@ -58,9 +60,7 @@ passport.serializeUser((user: any, done) => {
 passport.deserializeUser(async (id: number, done) => {
   try {
     const db = await getDb();
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, id),
-    });
+    const [user] = await db.select().from(users).where(eq(users.id, id)).limit(1);
     if (!user) {
       console.warn(`Session invalid: User ${id} not found during deserialization`);
       return done(null, false);

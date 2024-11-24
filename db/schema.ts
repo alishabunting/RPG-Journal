@@ -32,7 +32,9 @@ export const journals = pgTable("journals", {
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
-export const quests: any = pgTable("quests", {
+export type QuestTable = typeof quests;
+
+export const quests = pgTable("quests", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   userId: integer("user_id").references(() => users.id).notNull(),
   title: text("title").notNull(),
@@ -40,17 +42,22 @@ export const quests: any = pgTable("quests", {
   category: text("category").notNull(),
   difficulty: integer("difficulty").notNull(),
   xpReward: integer("xp_reward").notNull(),
-  statRequirements: jsonb("stat_requirements"),
-  statRewards: jsonb("stat_rewards"),
+  statRequirements: jsonb("stat_requirements").$type<Record<string, number>>(),
+  statRewards: jsonb("stat_rewards").$type<Record<string, number>>(),
   timeframe: text("timeframe"),
   status: text("status").default("active").notNull(),
   storylineId: text("storyline_id"),
-  previousQuestId: integer("previous_quest_id").references(() => quests.id),
-  nextQuestId: integer("next_quest_id").references(() => quests.id),
-  metadata: jsonb("metadata"),
+  previousQuestId: integer("previous_quest_id"),
+  nextQuestId: integer("next_quest_id"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at")
 });
+
+export type QuestWithRelations = typeof quests.$inferSelect & {
+  previousQuest?: QuestWithRelations;
+  nextQuest?: QuestWithRelations;
+};
 
 export const insertUserSchema = createInsertSchema(users);
 export const selectUserSchema = createSelectSchema(users);

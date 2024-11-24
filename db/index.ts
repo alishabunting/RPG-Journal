@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/neon-serverless";
 import { Pool } from "@neondatabase/serverless";
-import type { PoolClient } from "@neondatabase/serverless/types";
+import type { PoolClient } from "@neondatabase/serverless";
 import { WebSocket } from "ws";
 import * as schema from "./schema.js";
 import { neonConfig } from '@neondatabase/serverless';
@@ -8,34 +8,50 @@ import { sql } from "drizzle-orm";
 
 console.log("=== Database Initialization: Starting ===");
 
-if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
-  );
+function validateDatabaseConfig() {
+  const requiredEnvVars = ['DATABASE_URL', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGHOST', 'PGPORT'];
+  const missing = requiredEnvVars.filter(v => !process.env[v]);
+  
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required database environment variables: ${missing.join(', ')}`
+    );
+  }
+  
+  // Validate DATABASE_URL format
+  const url = process.env.DATABASE_URL;
+  if (!url?.startsWith('postgres://') && !url?.startsWith('postgresql://')) {
+    throw new Error('DATABASE_URL must be a valid PostgreSQL connection string');
+  }
 }
+
+validateDatabaseConfig();
 
 // Configure WebSocket globally for Neon with Replit optimizations
 console.log("Configuring Neon database connection...");
 neonConfig.webSocketConstructor = WebSocket;
 neonConfig.poolQueryViaFetch = true;
 neonConfig.useSecureWebSocket = true;
-neonConfig.pipeliningSupportValue = false;
+neonConfig.pipelineConnect = false; // Disable pipelining for better stability
+neonConfig.connectTimeout = 30000; // Increase connection timeout
 
 // Enhanced pool configuration with auto-scaling
 const POOL_CONFIG = {
   minConnections: 1,
-  maxConnections: 3, // Reduced max connections for Replit environment
+  maxConnections: 3, // Increased slightly for better concurrency
   initialConnections: 1,
   scaleUpStep: 1,
   scaleDownStep: 1,
-  scaleUpThreshold: 0.8,
-  scaleDownThreshold: 0.2,
-  healthCheckInterval: 60000, // Increased interval to reduce overhead
-  metricsWindow: 120000, // Increased window for better decision making
-  cooldownPeriod: 60000, // Increased cooldown to prevent rapid scaling
-  connectionTimeout: 10000, // Increased timeout for Replit environment
-  maxRetries: 3,
-  retryDelay: 1000,
+  scaleUpThreshold: 0.7, // Less aggressive scaling up
+  scaleDownThreshold: 0.3,
+  healthCheckInterval: 45000, // Increased to reduce overhead
+  metricsWindow: 60000, // Reduced for more responsive scaling
+  cooldownPeriod: 30000, // Reduced for more responsive scaling
+  connectionTimeout: 15000, // Increased timeout for reliability
+  maxRetries: 5, // Increased retries
+  retryDelay: 2000, // Increased delay between retries
+  maxUses: 5000, // Added connection recycling
+  idleTimeout: 30000 // Added idle timeout
 };
 
 // Pool metrics tracking
@@ -47,6 +63,39 @@ interface PoolMetrics {
   waitingRequests: number;
   responseTime: number;
   errors: number;
+  maxConnections: number;
+  minConnections: number;
+  lastError?: string;
+}
+
+// Enhanced error handling with retries
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 1000;
+const MAX_RETRY_DELAY = 5000;
+
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  retries = MAX_RETRIES,
+  initialDelay = INITIAL_RETRY_DELAY
+): Promise<T> {
+  let lastError: Error | null = null;
+  let delay = initialDelay;
+
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+      console.error(`Operation failed (attempt ${i + 1}/${retries}):`, error);
+      
+      if (i < retries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, MAX_RETRY_DELAY);
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 class PoolManager {
@@ -64,11 +113,36 @@ class PoolManager {
     this.initPromise = (async () => {
       try {
         console.log("Initializing connection pool...");
-        await this.createPool();
-        await this.verifyPool();
-        this.startMetricsCollection();
+        
+        // Validate environment variables first
+        validateDatabaseConfig();
+        
+        // Create and verify pool with retries
+        let retries = 3;
+        let lastError = null;
+        
+        while (retries > 0) {
+          try {
+            await this.createPool();
+            await this.verifyPool();
+            console.log("Pool verification successful");
+            this.startMetricsCollection();
+            return;
+          } catch (error) {
+            lastError = error;
+            console.error(`Pool initialization attempt failed (${retries} retries left):`, error);
+            retries--;
+            
+            if (retries > 0) {
+              const delay = Math.min(1000 * (4 - retries), 3000);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
+        }
+        
+        throw lastError || new Error("Pool initialization failed after all retries");
       } catch (error) {
-        console.error("Pool initialization failed:", error);
+        console.error("Fatal pool initialization error:", error);
         this.pool = null;
         this.initPromise = null;
         throw error;
@@ -142,7 +216,9 @@ class PoolManager {
         idleConnections: this.pool.idleCount,
         waitingRequests: this.pool.waitingCount,
         responseTime,
-        errors: 0
+        errors: 0,
+        maxConnections: POOL_CONFIG.maxConnections,
+        minConnections: POOL_CONFIG.minConnections
       };
 
       this.metrics.push(metric);
@@ -157,7 +233,10 @@ class PoolManager {
         idleConnections: 0,
         waitingRequests: 0,
         responseTime: 0,
-        errors: 1
+        errors: 1,
+        maxConnections: POOL_CONFIG.maxConnections,
+        minConnections: POOL_CONFIG.minConnections,
+        lastError: error instanceof Error ? error.message : 'Unknown error'
       });
     }
   }
@@ -244,11 +323,18 @@ class PoolManager {
     return this.pool!.connect();
   }
 
-  async query(...args: any[]) {
+  async query<T extends any[]>(queryText: string, values?: any[]) {
     if (!this.pool) {
       await this.initialize();
     }
-    return this.pool!.query(...args);
+    try {
+      const result = await this.pool!.query<T>(queryText, values);
+      return result;
+    } catch (error) {
+      console.error('Query error:', error);
+      await this.initialize(); // Reinitialize on error
+      return this.pool!.query<T>(queryText, values);
+    }
   }
 
   async end() {
@@ -281,27 +367,30 @@ const poolManager = new PoolManager();
 let db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
-  if (!db) {
+  const initializeDb = async () => {
     await poolManager.initialize();
     const client = await poolManager.getClient();
-    db = drizzle(client, { schema });
+    return drizzle(client, { schema });
+  };
+
+  if (!db) {
+    db = await withRetry(initializeDb);
   }
 
   try {
+    // Verify connection with timeout
     const timeout = new Promise((_, reject) => 
       setTimeout(() => reject(new Error('Database operation timeout')), 
       POOL_CONFIG.connectionTimeout)
     );
     
-    const query = db.select({ value: sql`1` }).execute();
+    const query = db.select({ value: sql`1` });
     await Promise.race([query, timeout]);
     
     return db;
   } catch (error) {
     console.warn("Database connection invalid, reinitializing...");
-    await poolManager.initialize();
-    const client = await poolManager.getClient();
-    db = drizzle(client, { schema });
+    db = await withRetry(initializeDb);
     return db;
   }
 }
@@ -322,7 +411,7 @@ export const getPoolStatus = async () => {
 
 export const pool = {
   connect: async () => poolManager.getClient(),
-  query: async (...args: any[]) => poolManager.query(...args),
+  query: async <T extends any[] = any[]>(queryText: string, values?: any[]) => poolManager.query<T>(queryText, values),
   end: async () => {
     await poolManager.end();
     db = null;
@@ -338,7 +427,7 @@ export const checkConnection = async () => {
       POOL_CONFIG.connectionTimeout)
     );
     
-    const query = database.select({ value: sql`1` }).execute();
+    const query = database.select({ value: sql`1` });
     await Promise.race([query, timeout]);
     
     return true;
